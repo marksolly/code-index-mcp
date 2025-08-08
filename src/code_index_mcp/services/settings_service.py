@@ -12,7 +12,6 @@ from typing import Dict, Any
 from .base_service import BaseService
 from ..utils import ResponseFormatter
 from ..constants import SETTINGS_DIR
-from ..project_settings import ProjectSettings
 
 
 def manage_temp_directory(action: str) -> Dict[str, Any]:
@@ -41,6 +40,7 @@ def manage_temp_directory(action: str) -> Dict[str, Any]:
 
         try:
             # Use ProjectSettings to handle directory creation consistently
+            from ..project_settings import ProjectSettings
             ProjectSettings("", skip_load=True)
 
             result = ResponseFormatter.directory_info_response(

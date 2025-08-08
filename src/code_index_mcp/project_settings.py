@@ -215,6 +215,21 @@ class ProjectSettings:
             else:
                 return os.path.join(os.path.expanduser("~"), INDEX_FILE)
 
+    def get_db_path(self):
+        """Get the path to the database file"""
+        try:
+            path = os.path.join(self.settings_path, "code_index.db")
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            return path
+        except Exception as e:
+            print(f"Error getting db path: {e}")
+            # If error occurs, use file in project or home directory as fallback
+            if self.base_path and os.path.exists(self.base_path):
+                return os.path.join(self.base_path, "code_index.db")
+            else:
+                return os.path.join(os.path.expanduser("~"), "code_index.db")
+
     # get_cache_path method removed - no longer needed with new indexing system
 
     def _get_timestamp(self):

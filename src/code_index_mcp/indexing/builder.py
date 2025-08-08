@@ -6,11 +6,13 @@ indexing process, from file scanning to relationship analysis to final index ass
 """
 
 import os
+import json
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 
-from .models import CodeIndex, FileInfo, FileAnalysisResult, ValidationResult
+from ..services.database import DatabaseService
+from .models import FileInfo, FileAnalysisResult, ValidationResult
 from .scanner import ProjectScanner
 from .analyzers import LanguageAnalyzerManager
 from .relationships import RelationshipTracker
@@ -19,27 +21,26 @@ from .relationships import RelationshipTracker
 class IndexBuilder:
     """Main builder class that coordinates all indexing components."""
 
-    def __init__(self, max_workers: Optional[int] = None):
+    def __init__(self, db_service: DatabaseService, max_workers: Optional[int] = None):
         """
         Initialize the index builder.
 
         Args:
+            db_service: An instance of the DatabaseService.
             max_workers: Maximum number of worker threads for parallel processing.
         """
+        self.db_service = db_service
         self.max_workers = max_workers
         self.analyzer_manager = LanguageAnalyzerManager(max_workers)
         self.relationship_tracker = RelationshipTracker()
         self.project_path = ""  # Initialize project_path
 
-    def build_index(self, project_path: str) -> CodeIndex:
+    def build_index(self, project_path: str, generate_log_file: bool = False):
         """
         Build complete code index for a project.
 
         Args:
             project_path: Path to the project root directory
-
-        Returns:
-            Complete CodeIndex structure
         """
         start_time = datetime.now()
         self.project_path = project_path  # Store for file path resolution
@@ -55,32 +56,21 @@ class IndexBuilder:
             # Step 3: Build relationships between code elements
             relationships = self.relationship_tracker.build_relationships(analysis_results)
 
-            # Step 4: Assemble final index structure
-            index = self._assemble_index(scan_result, analysis_results, relationships)
+            # Step 4: Assemble and write index to database
+            self._assemble_and_write_index(scan_result, analysis_results, relationships)
 
-            # Step 5: Add timing and metadata
+            # Step 5: Add timing and metadata (can be stored in a separate table or file if needed)
             end_time = datetime.now()
             analysis_time_ms = int((end_time - start_time).total_seconds() * 1000)
 
-            index.index_metadata.update({
-                'analysis_time_ms': analysis_time_ms,
-                'files_with_errors': self._collect_files_with_errors(analysis_results),
-                'languages_analyzed': self._collect_analyzed_languages(analysis_results)
-            })
-
-            # Step 6: Validate the index
-            validation_result = self._validate_index(index)
-            if not validation_result.is_valid:
-                # Log warnings but don't fail the build
-                print(f"Index validation warnings: {validation_result.warnings}")
-                if validation_result.errors:
-                    print(f"Index validation errors: {validation_result.errors}")
-
-            return index
+            # TODO: Store metadata in the database
+            print(f"Analysis complete in {analysis_time_ms}ms.")
+            print(f"Files with errors: {self._collect_files_with_errors(analysis_results)}")
+            print(f"Languages analyzed: {self._collect_analyzed_languages(analysis_results)}")
 
         except (OSError, IOError, ValueError, RuntimeError) as e:
-            # Create a minimal index on failure
-            return self._create_fallback_index(project_path, str(e))
+            # Log the error, no fallback index to create
+            print(f"Error building index for {project_path}: {e}")
 
     def _analyze_files(self, file_list: List[FileInfo]) -> List[FileAnalysisResult]:
         """
@@ -141,146 +131,149 @@ class IndexBuilder:
         except (OSError, PermissionError, FileNotFoundError):
             return None
 
-    def _assemble_index(
-        self,
-        scan_result,
-        analysis_results: List[FileAnalysisResult],
-        relationships
-    ) -> CodeIndex:
+    def _assemble_and_write_index(self, scan_result, analysis_results, relationships):
         """
-        Assemble the final index structure.
-
-        Args:
-            scan_result: Project scanning results
-            analysis_results: File analysis results
-            relationships: Relationship graph
-
-        Returns:
-            Complete CodeIndex structure
+        Assemble the index data and write it to the SQLite database.
         """
-        # Build file entries
-        files = []
-        for result in analysis_results:
-            file_entry = {
-                'id': result.file_info.id,
-                'path': result.file_info.path,
-                'size': result.file_info.size,
-                'line_count': self._estimate_line_count(result),
-                'language': result.file_info.language,
-                'functions': [self._serialize_function(func) for func in result.functions],
-                'classes': [self._serialize_class(cls) for cls in result.classes],
-                'imports': [self._serialize_import(imp) for imp in result.imports],
-                'language_specific': result.language_specific,
-                'imported_by': []  # Will be populated by relationship analysis
-            }
-            files.append(file_entry)
+        conn = self.db_service.get_connection()
+        cursor = conn.cursor()
 
-        # Build lookup tables
-        lookups = self._build_lookup_tables(analysis_results)
+        try:
+            # Get lookup tables for symbol and relationship types
+            cursor.execute("SELECT id, name FROM symbol_types")
+            symbol_type_map = {name: id for id, name in cursor.fetchall()}
 
-        # Build reverse lookups from relationships
-        reverse_lookups = relationships.reverse_lookups
+            cursor.execute("SELECT id, name FROM relationship_types")
+            relationship_type_map = {name: id for id, name in cursor.fetchall()}
 
-        # Create index metadata
-        index_metadata = {
-            'version': '4.0',  # Updated for duplicate names support
-            'duplicate_names_support': True,
-            'qualified_names_support': True
-        }
+            # Use a transaction for atomicity and disable constraints for performance
+            cursor.execute("PRAGMA foreign_keys = OFF;")
+            cursor.execute("PRAGMA ignore_check_constraints = ON;")
+            cursor.execute("BEGIN")
 
-        return CodeIndex(
-            project_metadata=scan_result.project_metadata,
-            directory_tree=scan_result.directory_tree,
-            files=files,
-            lookups=lookups,
-            reverse_lookups=reverse_lookups,
-            special_files=scan_result.special_files,
-            index_metadata=index_metadata
-        )
+            for result in analysis_results:
+                file_info = result.file_info
+                cursor.execute(
+                    """
+                    INSERT INTO files (path, size, line_count, modified_time, language)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        file_info.path,
+                        file_info.size,
+                        self._estimate_line_count(result),
+                        file_info.modified_time,
+                        file_info.language,
+                    ),
+                )
+                file_id = cursor.lastrowid
 
-    def _serialize_function(self, func) -> Dict[str, Any]:
-        """Serialize a FunctionInfo object to dictionary."""
-        return {
-            'name': func.name,
-            'parameters': func.parameters,
-            'line_start': func.line_start,
-            'line_end': func.line_end,
-            'line_count': func.line_count,
-            'calls': func.calls,
-            'called_by': func.called_by,
-            'is_async': func.is_async,
-            'decorators': func.decorators
-        }
+                # A map for symbol names to their DB IDs for the current file
+                file_symbol_map = {}
 
-    def _serialize_class(self, cls) -> Dict[str, Any]:
-        """Serialize a ClassInfo object to dictionary."""
-        return {
-            'name': cls.name,
-            'line_start': cls.line_start,
-            'line_end': cls.line_end,
-            'line_count': cls.line_count,
-            'methods': cls.methods,
-            'inherits_from': cls.inherits_from,
-            'instantiated_by': cls.instantiated_by
-        }
+                # Insert classes and store their IDs
+                for cls in result.classes:
+                    cursor.execute(
+                        """
+                        INSERT INTO code_symbols (file_id, name, type_id, line_start, line_end)
+                        VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (
+                            file_id,
+                            cls.name,
+                            symbol_type_map['class'],
+                            cls.line_start,
+                            cls.line_end,
+                        ),
+                    )
+                    class_symbol_id = cursor.lastrowid
+                    file_symbol_map[cls.name] = class_symbol_id
 
-    def _serialize_import(self, imp) -> Dict[str, Any]:
-        """Serialize an ImportInfo object to dictionary."""
-        return {
-            'module': imp.module,
-            'imported_names': imp.imported_names,
-            'import_type': imp.import_type,
-            'line_number': imp.line_number
-        }
+                # Insert functions and store their IDs and properties
+                for func in result.functions:
+                    cursor.execute(
+                        """
+                        INSERT INTO code_symbols (file_id, name, type_id, line_start, line_end)
+                        VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (
+                            file_id,
+                            func.name,
+                            symbol_type_map['function'],
+                            func.line_start,
+                            func.line_end,
+                        ),
+                    )
+                    func_symbol_id = cursor.lastrowid
+                    file_symbol_map[func.name] = func_symbol_id
 
-    def _build_lookup_tables(self, analysis_results: List[FileAnalysisResult]) -> Dict[str, Any]:
-        """Build forward lookup tables with support for duplicate names."""
-        lookups = {
-            'path_to_id': {},
-            'function_to_file_id': {},
-            'class_to_file_id': {}
-        }
+                    # Store parameters in symbol_properties
+                    if func.parameters:
+                        cursor.execute(
+                            """
+                            INSERT INTO symbol_properties (symbol_id, key, value)
+                            VALUES (?, ?, ?)
+                            """,
+                            (func_symbol_id, 'parameters', json.dumps(func.parameters)),
+                        )
 
-        duplicate_functions = set()
-        duplicate_classes = set()
+                # Insert imports as symbols and store their properties
+                for imp in result.imports:
+                    cursor.execute(
+                        """
+                        INSERT INTO code_symbols (file_id, name, type_id, line_start, line_end)
+                        VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (
+                            file_id,
+                            imp.module,  # Using module name as the symbol name
+                            symbol_type_map['import'],
+                            imp.line_number,
+                            imp.line_number,
+                        ),
+                    )
+                    import_symbol_id = cursor.lastrowid
 
-        for result in analysis_results:
-            file_id = result.file_info.id
-            file_path = result.file_info.path
+                    # Store imported_names in symbol_properties
+                    if imp.imported_names:
+                        cursor.execute(
+                            """
+                            INSERT INTO symbol_properties (symbol_id, key, value)
+                            VALUES (?, ?, ?)
+                            """,
+                            (import_symbol_id, 'imported_names', json.dumps(imp.imported_names)),
+                        )
 
-            # Path to ID lookup (unchanged)
-            lookups['path_to_id'][file_path] = file_id
+                # Create 'contains_method' relationships
+                for cls in result.classes:
+                    class_symbol_id = file_symbol_map.get(cls.name)
+                    if not class_symbol_id:
+                        continue
 
-            # Function to file ID lookup - support multiple files per function name
-            for func in result.functions:
-                if func.name not in lookups['function_to_file_id']:
-                    lookups['function_to_file_id'][func.name] = []
-                else:
-                    duplicate_functions.add(func.name)
-                
-                # Avoid duplicate file IDs for the same function name
-                if file_id not in lookups['function_to_file_id'][func.name]:
-                    lookups['function_to_file_id'][func.name].append(file_id)
+                    for method_name in cls.methods:
+                        method_symbol_id = file_symbol_map.get(method_name)
+                        if method_symbol_id:
+                            cursor.execute(
+                                """
+                                INSERT INTO relationships (source_symbol_id, target_symbol_id, type_id)
+                                VALUES (?, ?, ?)
+                                """,
+                                (class_symbol_id, method_symbol_id, relationship_type_map['contains_method']),
+                            )
 
-            # Class to file ID lookup - support multiple files per class name
-            for cls in result.classes:
-                if cls.name not in lookups['class_to_file_id']:
-                    lookups['class_to_file_id'][cls.name] = []
-                else:
-                    duplicate_classes.add(cls.name)
-                
-                # Avoid duplicate file IDs for the same class name
-                if file_id not in lookups['class_to_file_id'][cls.name]:
-                    lookups['class_to_file_id'][cls.name].append(file_id)
+            # TODO: Insert other relationships (calls, inherits, etc.) from the `relationships` object.
 
-        # Log duplicate detection statistics
-        if duplicate_functions:
-            print(f"Detected {len(duplicate_functions)} duplicate function names: {sorted(list(duplicate_functions))[:5]}{'...' if len(duplicate_functions) > 5 else ''}")
-        
-        if duplicate_classes:
-            print(f"Detected {len(duplicate_classes)} duplicate class names: {sorted(list(duplicate_classes))[:5]}{'...' if len(duplicate_classes) > 5 else ''}")
+            conn.commit()
+            
+            # Re-enable constraints
+            cursor.execute("PRAGMA foreign_keys = ON;")
+            cursor.execute("PRAGMA ignore_check_constraints = OFF;")
 
-        return lookups
+        except Exception as e:
+            conn.rollback()
+            print(f"Database transaction failed: {e}")
+        finally:
+            cursor.close()
 
     def _estimate_line_count(self, result: FileAnalysisResult) -> int:
         """Estimate line count from analysis result."""
@@ -319,102 +312,3 @@ class IndexBuilder:
             languages.add(result.file_info.language)
 
         return sorted(list(languages))
-
-    def _validate_index(self, index: CodeIndex) -> ValidationResult:
-        """Validate the completed index for consistency."""
-        errors = []
-        warnings = []
-
-        # Check required fields
-        if not index.project_metadata:
-            errors.append("Missing project_metadata")
-
-        if not index.files:
-            warnings.append("No files in index")
-
-        # Check file ID consistency
-        file_ids = set()
-        for file_entry in index.files:
-            file_id = file_entry.get('id')
-            if file_id is None:
-                errors.append(f"File missing ID: {file_entry.get('path', 'unknown')}")
-            elif file_id in file_ids:
-                errors.append(f"Duplicate file ID: {file_id}")
-            else:
-                file_ids.add(file_id)
-
-        # Check lookup table consistency
-        if 'path_to_id' in index.lookups:
-            for path, file_id in index.lookups['path_to_id'].items():
-                if file_id not in file_ids:
-                    errors.append(
-                        f"Lookup references non-existent file ID: {file_id} for path {path}"
-                    )
-
-        # Check version
-        version = index.index_metadata.get('version')
-        if not version or version < '4.0':
-            warnings.append(f"Index version {version} may be outdated")
-        
-        # Validate duplicate names support in lookup tables
-        if 'function_to_file_id' in index.lookups:
-            for func_name, file_ids in index.lookups['function_to_file_id'].items():
-                if not isinstance(file_ids, list):
-                    errors.append(f"Function lookup for '{func_name}' should be a list, got {type(file_ids)}")
-                elif not all(isinstance(fid, int) for fid in file_ids):
-                    errors.append(f"All file IDs in function lookup for '{func_name}' should be integers")
-        
-        if 'class_to_file_id' in index.lookups:
-            for class_name, file_ids in index.lookups['class_to_file_id'].items():
-                if not isinstance(file_ids, list):
-                    errors.append(f"Class lookup for '{class_name}' should be a list, got {type(file_ids)}")
-                elif not all(isinstance(fid, int) for fid in file_ids):
-                    errors.append(f"All file IDs in class lookup for '{class_name}' should be integers")
-
-        return ValidationResult(
-            is_valid=len(errors) == 0,
-            errors=errors,
-            warnings=warnings
-        )
-
-    def _create_fallback_index(self, project_path: str, error_message: str) -> CodeIndex:
-        """Create a minimal fallback index when building fails."""
-        project_name = Path(project_path).name
-
-        return CodeIndex(
-            project_metadata={
-                'name': project_name,
-                'root_path': project_path,
-                'indexed_at': datetime.now(),
-                'total_files': 0,
-                'total_lines': 0
-            },
-            directory_tree={},
-            files=[],
-            lookups={
-                'path_to_id': {},
-                'function_to_file_id': {},
-                'class_to_file_id': {}
-            },
-            reverse_lookups={
-                'function_callers': {},
-                'class_instantiators': {},
-                'imports_module': {},
-                'has_decorator': {}
-            },
-            special_files={
-                'entry_points': [],
-                'config_files': [],
-                'documentation': [],
-                'build_files': []
-            },
-            index_metadata={
-                'version': '4.0',
-                'duplicate_names_support': True,
-                'qualified_names_support': True,
-                'build_error': error_message,
-                'analysis_time_ms': 0,
-                'files_with_errors': [],
-                'languages_analyzed': []
-            }
-        )

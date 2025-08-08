@@ -9,7 +9,6 @@ from typing import Dict, Any, Optional
 
 from .base_service import BaseService
 from ..utils import ValidationHelper, ResponseFormatter
-from ..search.base import is_safe_regex_pattern
 
 
 class SearchService(BaseService):
@@ -53,6 +52,9 @@ class SearchService(BaseService):
             ValueError: If project is not set up or search parameters are invalid
         """
         self._require_project_setup()
+
+        # Import here to avoid circular dependency
+        from ..search.base import is_safe_regex_pattern
 
         # Smart regex detection if regex parameter is None
         if regex is None:

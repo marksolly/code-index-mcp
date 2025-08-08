@@ -12,7 +12,6 @@ from mcp.server.fastmcp import Context
 
 from .base_service import BaseService
 from ..utils import ValidationHelper, ResponseFormatter
-from ..project_settings import ProjectSettings
 from ..constants import SUPPORTED_EXTENSIONS
 
 
@@ -193,10 +192,19 @@ class ProjectService(BaseService):
         self.helper.update_base_path(abs_path)
 
         # Create settings manager for the project path
+        from ..project_settings import ProjectSettings
         project_settings = ProjectSettings(abs_path, skip_load=False)
         self.helper.update_settings(project_settings)
 
         print(f"Project settings path: {project_settings.settings_path}")
+
+        # Initialize the database
+        from .database import DatabaseService
+        db_path = project_settings.get_db_path()
+        db_service = DatabaseService(db_path)
+        db_service.connect()
+        db_service.initialize_db()
+        db_service.close()
 
         # Check for version migration
         print("Checking for index version and migration...")
@@ -353,31 +361,36 @@ class ProjectService(BaseService):
         Returns:
             Number of files indexed
         """
+        from ..indexing import IndexBuilder
+        from .database import DatabaseService
+
         print(f"Building index for project: {base_path}")
 
-        # Import here to avoid circular imports
-        from ..indexing import IndexBuilder
+        db_path = self.settings.get_db_path()
+        db_service = DatabaseService(db_path)
+        db_service.delete_db()  # Delete the old database file
+        db_service.connect()
+        db_service.initialize_db()
 
-        builder = IndexBuilder()
-        code_index = builder.build_index(base_path)
+        try:
+            import time
+            start_time = time.time()
 
-        # Convert to dictionary for storage
-        index_json = code_index.to_json()
-        index_data = json.loads(index_json)
+            builder = IndexBuilder(db_service)
+            builder.build_index(base_path, generate_log_file)
 
-        # Store in cache
-        if hasattr(self.ctx.request_context.lifespan_context, 'index_cache'):
-            self.ctx.request_context.lifespan_context.index_cache.update(index_data)
-        if hasattr(self.ctx.request_context.lifespan_context, 'file_index'):
-            self.ctx.request_context.lifespan_context.file_index.update(index_data)
+            end_time = time.time()
+            duration = end_time - start_time
+            print(f"Database indexing duration: {duration:.2f} seconds")
 
-        file_count = code_index.project_metadata.get('total_files', 0)
-        self.helper.update_file_count(file_count)
+            # Get the file count from the database
+            cursor = db_service.get_connection().cursor()
+            cursor.execute("SELECT COUNT(*) FROM files")
+            file_count = cursor.fetchone()[0]
+            cursor.close()
 
-        # Save the index
-        if self.settings:
-            self.settings.save_index(code_index)
+            print(f"Index built successfully with {file_count} files")
+            return file_count
 
-        print(f"Index built successfully with {file_count} files")
-        return file_count
-
+        finally:
+            db_service.close()

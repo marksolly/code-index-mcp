@@ -57,8 +57,21 @@ class IndexService(BaseService):
         """
         self._require_project_setup()
 
-        # Clear existing index
-        self.helper.clear_index_cache()
+        # Clear the entire database before a full rebuild
+        db_path = self.settings.get_db_path()
+        db_service = DatabaseService(db_path)
+        db_service.connect()
+        try:
+            cursor = db_service.get_connection().cursor()
+            # Clear all tables, respecting foreign key constraints
+            cursor.execute("DELETE FROM relationships;")
+            cursor.execute("DELETE FROM symbol_properties;")
+            cursor.execute("DELETE FROM code_symbols;")
+            cursor.execute("DELETE FROM files;")
+            db_service.get_connection().commit()
+            cursor.close()
+        finally:
+            db_service.close()
 
         # Re-index the project
         file_count = self._index_project(self.base_path)
@@ -141,6 +154,70 @@ class IndexService(BaseService):
 
         return stats
 
+    def update_file(self, file_path: str):
+        """
+        Update the index for a single file.
+        Deletes existing data and re-indexes the file.
+        """
+        self.logger.info(f"Incrementally updating index for: {file_path}")
+        db_path = self.settings.get_db_path()
+        db_service = DatabaseService(db_path)
+        db_service.connect()
+        try:
+            # First, remove existing data for this file
+            self.remove_file(file_path, db_service)
+
+            # Now, re-index the single file
+            from ..indexing import IndexBuilder
+            builder = IndexBuilder(db_service)
+
+            # We need to create a FileInfo object for the analyzer
+            from ..indexing.models import FileInfo
+            from ..indexing.scanner import get_file_info
+
+            try:
+                file_info = get_file_info(self.base_path, file_path)
+                if file_info:
+                    analysis_results = builder._analyze_files([file_info])
+                    relationships = builder.relationship_tracker.build_relationships(analysis_results)
+                    builder._assemble_and_write_index(None, analysis_results, relationships)
+                    self.logger.info(f"Successfully updated index for: {file_path}")
+                else:
+                    self.logger.warning(f"Could not get file info for: {file_path}")
+            except FileNotFoundError:
+                self.logger.warning(f"File not found during update: {file_path}, assuming it was deleted.")
+                self.remove_file(file_path, db_service)
+
+        finally:
+            db_service.close()
+
+    def remove_file(self, file_path: str, db_service=None):
+        """
+        Remove all data associated with a file from the database.
+        """
+        self.logger.info(f"Removing all data for file: {file_path}")
+        
+        close_db_service = False
+        if db_service is None:
+            db_path = self.settings.get_db_path()
+            db_service = DatabaseService(db_path)
+            db_service.connect()
+            close_db_service = True
+
+        try:
+            conn = db_service.get_connection()
+            cursor = conn.cursor()
+            # The ON DELETE CASCADE foreign key will handle deleting related symbols and relationships
+            cursor.execute("DELETE FROM files WHERE path = ?", (file_path,))
+            conn.commit()
+            cursor.close()
+            self.logger.info(f"Successfully removed data for file: {file_path}")
+        except Exception as e:
+            self.logger.error(f"Error removing file data for {file_path}: {e}")
+        finally:
+            if close_db_service:
+                db_service.close()
+
     def _index_project(self, base_path: str) -> int:
         """
         Build the project index using the IndexBuilder system.
@@ -151,33 +228,31 @@ class IndexService(BaseService):
         Returns:
             Number of files indexed
         """
+        from ..indexing import IndexBuilder
+        from .database import DatabaseService
+
         print(f"Building index for project: {base_path}")
 
-        # Import here to avoid circular imports
-        from ..indexing import IndexBuilder
+        db_path = self.settings.get_db_path()
+        db_service = DatabaseService(db_path)
+        db_service.connect()
+        db_service.initialize_db()
 
-        builder = IndexBuilder()
-        code_index = builder.build_index(base_path)
+        try:
+            builder = IndexBuilder(db_service)
+            builder.build_index(base_path)
 
-        # Convert to dictionary for storage
-        index_json = code_index.to_json()
-        index_data = json.loads(index_json)
+            # Get the file count from the database
+            cursor = db_service.get_connection().cursor()
+            cursor.execute("SELECT COUNT(*) FROM files")
+            file_count = cursor.fetchone()[0]
+            cursor.close()
 
-        # Store in cache
-        if hasattr(self.ctx.request_context.lifespan_context, 'index_cache'):
-            self.ctx.request_context.lifespan_context.index_cache.update(index_data)
-        if hasattr(self.ctx.request_context.lifespan_context, 'file_index'):
-            self.ctx.request_context.lifespan_context.file_index.update(index_data)
+            print(f"Index built successfully with {file_count} files")
+            return file_count
 
-        file_count = code_index.project_metadata.get('total_files', 0)
-        self.helper.update_file_count(file_count)
-
-        # Save the index
-        if self.settings:
-            self.settings.save_index(code_index)
-
-        print(f"Index built successfully with {file_count} files")
-        return file_count
+        finally:
+            db_service.close()
 
     def start_background_rebuild(self) -> bool:
         """

@@ -9,8 +9,6 @@ import os
 from typing import Optional
 from mcp.server.fastmcp import Context
 
-from ..project_settings import ProjectSettings
-
 
 class ContextHelper:
     """
@@ -43,7 +41,7 @@ class ContextHelper:
             return ""
 
     @property
-    def settings(self) -> Optional[ProjectSettings]:
+    def settings(self) -> Optional['ProjectSettings']:
         """
         Get the project settings from the context.
 
@@ -51,8 +49,14 @@ class ContextHelper:
             The ProjectSettings instance, or None if not available
         """
         try:
-            return self.ctx.request_context.lifespan_context.settings
-        except AttributeError:
+            # Import here to avoid circular dependency
+            from ..project_settings import ProjectSettings
+            
+            settings_instance = self.ctx.request_context.lifespan_context.settings
+            if isinstance(settings_instance, ProjectSettings):
+                return settings_instance
+            return None
+        except (AttributeError, ImportError):
             return None
 
     @property
@@ -147,7 +151,7 @@ class ContextHelper:
         except AttributeError:
             pass  # Context not available or doesn't support this operation
 
-    def update_settings(self, settings: ProjectSettings) -> None:
+    def update_settings(self, settings: 'ProjectSettings') -> None:
         """
         Update the settings in the context.
 
@@ -155,8 +159,12 @@ class ContextHelper:
             settings: The new ProjectSettings instance
         """
         try:
-            self.ctx.request_context.lifespan_context.settings = settings
-        except AttributeError:
+            # Import here to avoid circular dependency
+            from ..project_settings import ProjectSettings
+
+            if isinstance(settings, ProjectSettings):
+                self.ctx.request_context.lifespan_context.settings = settings
+        except (AttributeError, ImportError):
             pass  # Context not available or doesn't support this operation
 
     def clear_index_cache(self) -> None:
