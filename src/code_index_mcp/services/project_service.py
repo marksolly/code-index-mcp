@@ -80,9 +80,7 @@ class ProjectService(BaseService):
                 # Create services
                 file_watcher = FileWatcherService(self.ctx)
                 index_service = IndexService(self.ctx)
-                success = file_watcher.start_monitoring(
-                    rebuild_callback=index_service.start_background_rebuild
-                )
+                success = file_watcher.start_monitoring(index_service)
                 
                 if success:
                     # Store in context

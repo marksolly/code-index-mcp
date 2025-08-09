@@ -20,6 +20,7 @@ try:
     WATCHDOG_AVAILABLE = True
 except ImportError:
     # Fallback classes for when watchdog is not available
+from .index_service import IndexService
     class Observer:
         """Fallback Observer class when watchdog library is not available."""
         def __init__(self):
@@ -77,18 +78,17 @@ class FileWatcherService(BaseService):
         self.event_handler: Optional[DebounceEventHandler] = None
         self.is_monitoring = False
         self.restart_attempts = 0
-        self.rebuild_callback: Optional[Callable] = None
 
         # Check if watchdog is available
         if not WATCHDOG_AVAILABLE:
             self.logger.warning("Watchdog library not available - file watcher disabled")
 
-    def start_monitoring(self, rebuild_callback: Callable) -> bool:
+    def start_monitoring(self, index_service: IndexService) -> bool:
         """
         Start file system monitoring.
 
         Args:
-            rebuild_callback: Function to call when rebuild is needed
+            index_service: The IndexService instance to call for updates
 
         Returns:
             True if monitoring started successfully, False otherwise
@@ -107,7 +107,7 @@ class FileWatcherService(BaseService):
             self.logger.error("Cannot start file watcher: %s", error)
             return False
 
-        self.rebuild_callback = rebuild_callback
+        self.index_service = index_service
 
         # Get debounce seconds from config
         config = self.settings.get_file_watcher_config()
@@ -117,7 +117,7 @@ class FileWatcherService(BaseService):
             self.observer = Observer()
             self.event_handler = DebounceEventHandler(
                 debounce_seconds=debounce_seconds,
-                rebuild_callback=self.rebuild_callback,
+                index_service=self.index_service,
                 base_path=Path(self.base_path),
                 logger=self.logger
             )
@@ -213,7 +213,6 @@ class FileWatcherService(BaseService):
             # Step 5: Clear all references
             self.observer = None
             self.event_handler = None
-            self.rebuild_callback = None
             self.is_monitoring = False
 
             self.logger.info("File watcher stopped and cleaned up successfully")
@@ -226,7 +225,6 @@ class FileWatcherService(BaseService):
             # Force cleanup even if there were errors
             self.observer = None
             self.event_handler = None
-            self.rebuild_callback = None
             self.is_monitoring = False
 
     def is_active(self) -> bool:
@@ -312,20 +310,20 @@ class DebounceEventHandler(FileSystemEventHandler):
     rebuild operations.
     """
 
-    def __init__(self, debounce_seconds: float, rebuild_callback: Callable,
+    def __init__(self, debounce_seconds: float, index_service: IndexService,
                  base_path: Path, logger: logging.Logger):
         """
         Initialize the debounce event handler.
 
         Args:
             debounce_seconds: Number of seconds to wait before triggering rebuild
-            rebuild_callback: Function to call when rebuild is needed
+            index_service: The IndexService instance to call for updates
             base_path: Base project path for filtering
             logger: Logger instance for debug messages
         """
         super().__init__()
         self.debounce_seconds = debounce_seconds
-        self.rebuild_callback = rebuild_callback
+        self.index_service = index_service
         self.base_path = base_path
         self.debounce_timer: Optional[Timer] = None
         self.logger = logger
@@ -359,7 +357,7 @@ class DebounceEventHandler(FileSystemEventHandler):
 
         if should_process:
             self.logger.debug("Processing file system event: %s - %s", event.event_type, event.src_path)
-            self.reset_debounce_timer()
+            self.reset_debounce_timer(event)
         else:
             self.logger.debug("Event filtered out: %s - %s", event.event_type, event.src_path)
 
@@ -495,7 +493,7 @@ class DebounceEventHandler(FileSystemEventHandler):
 
         return False
 
-    def reset_debounce_timer(self) -> None:
+    def reset_debounce_timer(self, event: FileSystemEvent) -> None:
         """Reset the debounce timer, canceling any existing timer."""
         if self.debounce_timer:
             self.debounce_timer.cancel()
@@ -505,27 +503,43 @@ class DebounceEventHandler(FileSystemEventHandler):
 
         self.debounce_timer = Timer(
             self.debounce_seconds,
-            self.trigger_rebuild
+            self.trigger_rebuild,
+            args=[event]
         )
         self.debounce_timer.start()
 
         self.logger.debug("Debounce timer started successfully")
 
-    def trigger_rebuild(self) -> None:
+    def trigger_rebuild(self, event: FileSystemEvent) -> None:
         """Trigger index rebuild after debounce period."""
         trigger_msg = "File changes detected, triggering background rebuild"
         self.logger.info(trigger_msg)
 
-        if self.rebuild_callback:
-            try:
-                self.logger.debug("Calling rebuild callback...")
+        from .database import DatabaseService
 
-                result = self.rebuild_callback()
+        db_service = None
+        try:
+            # Create a single database connection for this event
+            db_path = self.settings.get_db_path()
+            db_service = DatabaseService(db_path)
+            db_service.connect()
 
-                self.logger.debug("Rebuild callback completed with result: %s", result)
-            except Exception as e:
-                self.logger.error("Rebuild callback failed: %s", e)
-                traceback_msg = traceback.format_exc()
-                self.logger.error("Traceback: %s", traceback_msg)
-        else:
-            self.logger.warning("No rebuild callback configured")
+            self.logger.debug("Calling index service for event: %s - %s", event.event_type, event.src_path)
+            
+            if event.event_type == 'deleted':
+                self.index_service.remove_file(event.src_path, db_service)
+            elif event.event_type == 'moved':
+                # For moved events, remove the old path and update the new path
+                self.index_service.remove_file(event.src_path, db_service)
+                self.index_service.update_file(event.dest_path, db_service)
+            else: # created, modified
+                self.index_service.update_file(event.src_path, db_service)
+
+            self.logger.debug("Index service call completed for event: %s - %s", event.event_type, event.src_path)
+        except Exception as e:
+            self.logger.error("Index service call failed for event %s - %s: %s", event.event_type, event.src_path, e)
+            traceback_msg = traceback.format_exc()
+            self.logger.error("Traceback: %s", traceback_msg)
+        finally:
+            if db_service:
+                db_service.close()
