@@ -20,7 +20,6 @@ try:
     WATCHDOG_AVAILABLE = True
 except ImportError:
     # Fallback classes for when watchdog is not available
-from .index_service import IndexService
     class Observer:
         """Fallback Observer class when watchdog library is not available."""
         def __init__(self):
@@ -52,6 +51,7 @@ from .index_service import IndexService
 
 from .base_service import BaseService
 from ..constants import SUPPORTED_EXTENSIONS
+from .index_service import IndexService
 
 
 class FileWatcherService(BaseService):
@@ -119,7 +119,8 @@ class FileWatcherService(BaseService):
                 debounce_seconds=debounce_seconds,
                 index_service=self.index_service,
                 base_path=Path(self.base_path),
-                logger=self.logger
+                logger=self.logger,
+                settings=self.settings
             )
 
             # Log detailed Observer setup
@@ -311,7 +312,7 @@ class DebounceEventHandler(FileSystemEventHandler):
     """
 
     def __init__(self, debounce_seconds: float, index_service: IndexService,
-                 base_path: Path, logger: logging.Logger):
+                 base_path: Path, logger: logging.Logger, settings):
         """
         Initialize the debounce event handler.
 
@@ -320,6 +321,7 @@ class DebounceEventHandler(FileSystemEventHandler):
             index_service: The IndexService instance to call for updates
             base_path: Base project path for filtering
             logger: Logger instance for debug messages
+            settings: The settings object
         """
         super().__init__()
         self.debounce_seconds = debounce_seconds
@@ -327,6 +329,8 @@ class DebounceEventHandler(FileSystemEventHandler):
         self.base_path = base_path
         self.debounce_timer: Optional[Timer] = None
         self.logger = logger
+        self.settings = settings
+        self.ignore_spec = self._load_ignore_spec()
 
         # Exclusion patterns for directories and files to ignore
         self.exclude_patterns = {

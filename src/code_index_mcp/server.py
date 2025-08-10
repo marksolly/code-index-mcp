@@ -109,9 +109,51 @@ def get_settings_stats() -> str:
 
 @mcp.tool()
 @handle_mcp_tool_errors(return_type='str')
-def set_project_path(path: str, ctx: Context) -> str:
-    """Set the base project path for indexing."""
-    return ProjectService(ctx).initialize_project(path)
+def set_project_path(path: str, ctx: Context, generate_log_file: bool = False) -> str:
+    """
+    Set the base project path for indexing and initializes the index. Call this before your first use of any other tools in this set.
+
+    Args:
+        path: The project directory path to initialize. Must be a full path, not relative.
+        generate_log_file: Enable to generate a .logger.log file containing a list of all files and their included/ignored status.
+    """
+    return ProjectService(ctx).initialize_project(path, generate_log_file)
+
+@mcp.tool()
+@handle_mcp_tool_errors(return_type='str')
+def find_symbols(
+    ctx: Context,
+    pattern: str,
+    case_sensitive: bool = False,
+    symbol_type: list = None,
+    path_pattern: str = None,
+    limit: int = 50,
+    include_context: list = None
+) -> str:
+    """
+    Your default and most powerful tool for all code exploration. It is extremely fast and token-efficient. **Always try this first.**
+
+    It uses a highly optimized index to instantly find functions, classes, variables, and other code symbols. Use it not just to find where something is defined, but to understand how different parts of the code are connected.
+
+    CRITICAL: This tool requires the project index to be initialized. Use `set_project_path` once before your first search. If you get an error, it's likely the path isn't set.
+
+    Args:
+        pattern: The main search string for the symbol name. Uses glob-style wildcards (*, ?).
+        case_sensitive: Determines if pattern matching should be case-sensitive.
+        symbol_type: Filters search to specific symbol types (e.g., 'function', 'class').
+        path_pattern: Glob pattern to restrict search to specific files/directories.
+        limit: Maximum number of matching symbols to return.
+        include_context: Specifies which contextual information to include.
+    """
+    return SearchService(ctx).find_symbols(
+        pattern=pattern,
+        match_mode='glob',  # Hardcoded to glob as it's the only supported mode
+        case_sensitive=case_sensitive,
+        symbol_type=symbol_type,
+        path_pattern=path_pattern,
+        limit=limit,
+        include_context=include_context
+    )
 
 @mcp.tool()
 @handle_mcp_tool_errors(return_type='dict')
@@ -125,10 +167,14 @@ def search_code_advanced(
     regex: bool = None
 ) -> Dict[str, Any]:
     """
-    Search for a code pattern in the project using an advanced, fast tool.
+    A specialized tool for searching raw text. Fall back to this if `find_symbols` does not yield suitable results. You are strongly recommended to try `find_symbols` first.
 
-    This tool automatically selects the best available command-line search tool
-    (like ugrep, ripgrep, ag, or grep) for maximum performance.
+    This tool is for finding literal strings in comments, documentation, configuration files, or error messages. It is slower and uses more tokens than `find_symbols`.
+
+    Supports regex and uses the best available full text search program such as ugrep, ag, ripgrem or grep. Does not take advantage of the high speed index.
+    Use with caution, may be very slow on large codebases. Try to limit scope.
+
+    **Always attempt to use `find_symbols` before resorting to this tool.** If `find_symbols` returns no results for text you expect to exist, this tool can be a useful fallback to find where it might be referenced in plain text.
 
     Args:
         pattern: The search pattern. Can be literal text or regex (see regex parameter).
@@ -155,8 +201,7 @@ def search_code_advanced(
                The pattern will always be validated for safety to prevent ReDoS attacks.
 
     Returns:
-        A dictionary containing the search results or an error message.
-
+        Matched symbols plus inbound/outbound relations such as calls, imports, inherits, instantiatons, methods and file path.
     """
     return SearchService(ctx).search_code(
         pattern=pattern,
@@ -323,7 +368,7 @@ def get_file_watcher_status(ctx: Context) -> Dict[str, Any]:
         return {"status": "error", "message": f"Failed to get file watcher status: {e}"}
 
 @mcp.tool()
-@handle_mcp_tool_errors(return_type='str')
+@handle_mcp_tool_errors(return_type='dict')
 def configure_file_watcher(
     ctx: Context,
     enabled: bool = None,

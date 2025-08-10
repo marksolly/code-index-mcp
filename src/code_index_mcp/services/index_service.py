@@ -154,15 +154,19 @@ class IndexService(BaseService):
 
         return stats
 
-    def update_file(self, file_path: str):
+    def update_file(self, file_path: str, db_service=None):
         """
         Update the index for a single file.
         Deletes existing data and re-indexes the file.
         """
         self.logger.info(f"Incrementally updating index for: {file_path}")
-        db_path = self.settings.get_db_path()
-        db_service = DatabaseService(db_path)
-        db_service.connect()
+        
+        close_db_service = False
+        if db_service is None:
+            db_path = self.settings.get_db_path()
+            db_service = DatabaseService(db_path)
+            db_service.connect()
+            close_db_service = True
         try:
             # First, remove existing data for this file
             self.remove_file(file_path, db_service)

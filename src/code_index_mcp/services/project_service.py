@@ -238,7 +238,7 @@ class ProjectService(BaseService):
                 # Get search capabilities info
                 search_tool = project_settings.get_preferred_search_tool()
                 search_info = (" Basic search available." if search_tool is None
-                             else f" Advanced search enabled ({search_tool.name}).")
+                             else f" search_code_advanced uses {search_tool.name}.")
 
                 # Step 4: Start new file watcher with retry
                 watcher_success = await self._start_new_file_watcher_with_retry()
@@ -248,7 +248,7 @@ class ProjectService(BaseService):
                     self._record_file_watcher_error("Failed to start file watcher after loading existing index")
 
                 return (f"Project path set to: {abs_path}. "
-                        f"Loaded existing index with {file_count} files.{search_info}")
+                        f"Loaded existing index with {file_count} files. find_symbols enabled. {search_info}")
             else:
                 print("Old format index detected, will rebuild with new system")
 
@@ -271,7 +271,7 @@ class ProjectService(BaseService):
         # Get search capabilities info
         search_tool = project_settings.get_preferred_search_tool()
         search_info = (" Basic search available." if search_tool is None
-                     else f" Advanced search enabled ({search_tool.name}).")
+                     else f" search_code_advanced uses {search_tool.name}.")
 
         # Step 4: Start new file watcher with retry
         watcher_success = await self._start_new_file_watcher_with_retry()
@@ -280,7 +280,7 @@ class ProjectService(BaseService):
         if not watcher_success:
             self._record_file_watcher_error("Failed to start file watcher after building new index")
 
-        return f"Project path set to: {abs_path}. Indexed {file_count} files.{search_info}"
+        return f"Project path set to: {abs_path}. Indexed {file_count} files. find_symbols enabled. {search_info}"
 
     def get_project_config(self) -> str:
         """

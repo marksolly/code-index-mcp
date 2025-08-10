@@ -100,7 +100,7 @@ class DatabaseService:
             CREATE TABLE IF NOT EXISTS code_symbols (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 file_id INTEGER NOT NULL,
-                name TEXT NOT NULL,
+                name TEXT NOT NULL COLLATE NOCASE,
                 type_id INTEGER NOT NULL,
                 line_start INTEGER,
                 line_end INTEGER,
