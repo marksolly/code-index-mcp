@@ -177,6 +177,7 @@ For contributing or local development:
    ```bash
    npx @modelcontextprotocol/inspector uv run code-index-mcp
    ```
+**Important**: Use the `stdio` transport type. Other transports are not supported.
 
 <details>
 <summary><strong>Alternative: Manual pip Installation</strong></summary>
