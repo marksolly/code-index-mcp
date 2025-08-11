@@ -5,72 +5,57 @@ Shared constants for the Code Index MCP server.
 # Directory and file names
 SETTINGS_DIR = "code_indexer"
 CONFIG_FILE = "config.json"
-INDEX_FILE = "index.json"
-# CACHE_FILE removed - no longer needed with new indexing system
 
-# Supported file extensions for code analysis
-# This is the authoritative list used by both old and new indexing systems
-SUPPORTED_EXTENSIONS = [
-    # Core programming languages
-    '.py', '.pyw',                    # Python
-    '.js', '.jsx', '.ts', '.tsx',     # JavaScript/TypeScript
-    '.mjs', '.cjs',                   # Modern JavaScript
-    '.java',                          # Java
-    '.c', '.cpp', '.h', '.hpp',       # C/C++
-    '.cxx', '.cc', '.hxx', '.hh',     # C++ variants
-    '.cs',                            # C#
-    '.go',                            # Go
-    '.m', '.mm',                      # Objective-C
-    '.rb',                            # Ruby
-    '.php',                           # PHP
-    '.swift',                         # Swift
-    '.kt', '.kts',                    # Kotlin
-    '.rs',                            # Rust
-    '.scala',                         # Scala
-    '.sh', '.bash', '.zsh',           # Shell scripts
-    '.ps1',                           # PowerShell
-    '.bat', '.cmd',                   # Windows batch
-    '.r', '.R',                       # R
-    '.pl', '.pm',                     # Perl
-    '.lua',                           # Lua
-    '.dart',                          # Dart
-    '.hs',                            # Haskell
-    '.ml', '.mli',                    # OCaml
-    '.fs', '.fsx',                    # F#
-    '.clj', '.cljs',                  # Clojure
-    '.vim',                           # Vim script
-    '.zig',                           # Zig
-    
-    # Web and markup
-    '.html', '.htm',                  # HTML
-    '.css', '.scss', '.sass',         # Stylesheets
-    '.less', '.stylus', '.styl',      # Style languages
-    '.md', '.mdx',                    # Markdown
-    '.json', '.jsonc',                # JSON
-    '.xml',                           # XML
-    '.yml', '.yaml',                  # YAML
-    
-    # Frontend frameworks
-    '.vue',                           # Vue.js
-    '.svelte',                        # Svelte
-    '.astro',                         # Astro
-    
-    # Template engines
-    '.hbs', '.handlebars',            # Handlebars
-    '.ejs',                           # EJS
-    '.pug',                           # Pug
-    
-    # Database and SQL
-    '.sql', '.ddl', '.dml',           # SQL
-    '.mysql', '.postgresql', '.psql', # Database-specific SQL
-    '.sqlite', '.mssql', '.oracle',   # More databases
-    '.ora', '.db2',                   # Oracle and DB2
-    '.proc', '.procedure',            # Stored procedures
-    '.func', '.function',             # Functions
-    '.view', '.trigger', '.index',    # Database objects
-    '.migration', '.seed', '.fixture', # Migration files
-    '.schema',                        # Schema files
-    '.cql', '.cypher', '.sparql',     # NoSQL query languages
-    '.gql',                           # GraphQL
-    '.liquibase', '.flyway',          # Migration tools
-]
+# Supported languages and their corresponding file extensions
+SUPPORTED_LANGUAGES = {
+    "python": [".py", ".pyw"],
+    "javascript": [".js", ".jsx", ".mjs", ".cjs"],
+    "typescript": [".ts", ".tsx"],
+    "java": [".java"],
+    # "c": [".c", ".h"],
+    "cpp": [".cpp", ".hpp", ".cxx", ".cc", ".hxx", ".hh"],
+    "c_sharp": [".cs"],
+    "go": [".go"],
+    # "objective-c": [".m", ".mm"],
+    "ruby": [".rb"],
+    "php": [".php"],
+    "swift": [".swift"],
+    # "kotlin": [".kt", ".kts"],
+    "rust": [".rs"],
+    # "scala": [".scala"],
+    # "shell": [".sh", ".bash", ".zsh"],
+    # "powershell": [".ps1"],
+    # "batch": [".bat", ".cmd"],
+    # "r": [".r", ".R"],
+    # "perl": [".pl", ".pm"],
+    # "lua": [".lua"],
+    # "dart": [".dart"],
+    # "haskell": [".hs"],
+    # "ocaml": [".ml", ".mli"],
+    # "fsharp": [".fs", ".fsx"],
+    # "clojure": [".clj", ".cljs"],
+    # "vim": [".vim"],
+    # "zig": [".zig"],
+    "html": [".html", ".htm"],
+    "css": [".css", ".scss", ".sass", ".less", ".stylus", ".styl"],
+    # "markdown": [".md", ".mdx"],
+    # "json": [".json", ".jsonc"],
+    # "xml": [".xml"],
+    # "yaml": [".yml", ".yaml"],
+    # "vue": [".vue"],
+    # "svelte": [".svelte"],
+    # "astro": [".astro"],
+    # "handlebars": [".hbs", ".handlebars"],
+    # "ejs": [".ejs"],
+    # "pug": [".pug"],
+    # "sql": [".sql", ".ddl", ".dml", ".mysql", ".postgresql", ".psql", ".sqlite", ".mssql", ".oracle", ".ora", ".db2", ".proc", ".procedure", ".func", ".function", ".view", ".trigger", ".index", ".migration", ".seed", ".fixture", ".schema"],
+    # "nosql": [".cql", ".cypher", ".sparql"],
+    # "graphql": [".gql"],
+    # "migration_tools": [".liquibase", ".flyway"],
+}
+
+# Create a mapping from extension to language name
+EXTENSION_TO_LANGUAGE = {ext: lang for lang, exts in SUPPORTED_LANGUAGES.items() for ext in exts}
+
+# Supported file extensions for code analysis, derived from SUPPORTED_LANGUAGES
+SUPPORTED_EXTENSIONS = list(EXTENSION_TO_LANGUAGE.keys())

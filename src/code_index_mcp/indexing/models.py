@@ -26,6 +26,7 @@ class FileInfo:
 class FunctionInfo:
     """Function definition information."""
     name: str
+    qname: str
     parameters: List[str]
     line_start: int
     line_end: int
@@ -40,10 +41,11 @@ class FunctionInfo:
 class ClassInfo:
     """Class definition information."""
     name: str
+    qname: str
     line_start: int
     line_end: int
     line_count: int
-    methods: List[str]
+    methods: List[FunctionInfo]
     inherits_from: Optional[str] = None
     instantiated_by: List[str] = field(default_factory=list)
 

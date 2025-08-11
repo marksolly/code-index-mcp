@@ -16,7 +16,7 @@ from .models import (
 
 from .builder import IndexBuilder
 from .scanner import ProjectScanner
-from .analyzers import LanguageAnalyzerManager
+from ..analyzers.manager import LanguageAnalyzerManager
 
 __all__ = [
     'FileInfo',

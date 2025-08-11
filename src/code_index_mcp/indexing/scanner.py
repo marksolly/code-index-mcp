@@ -11,7 +11,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Any
 from .models import FileInfo, ProjectScanResult, SpecialFiles
-from .qualified_names import normalize_file_path
+from ..utils.qualified_names import normalize_file_path
 from code_index_mcp.constants import SUPPORTED_EXTENSIONS
 
 

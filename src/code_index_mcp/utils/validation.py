@@ -10,7 +10,7 @@ import re
 import fnmatch
 from typing import Optional, List
 
-from ..indexing.qualified_names import normalize_file_path
+from .qualified_names import normalize_file_path
 
 
 class ValidationHelper:

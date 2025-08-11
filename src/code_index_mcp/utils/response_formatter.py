@@ -8,7 +8,6 @@ services to ensure uniform response structures and formats.
 import json
 from typing import Any, Dict, List, Optional, Union
 
-from ..indexing.qualified_names import generate_qualified_name
 from ..indexing.duplicate_detection import detect_duplicate_functions, detect_duplicate_classes
 
 
@@ -42,23 +41,9 @@ class ResponseFormatter:
         if not relationship_list or not duplicate_names:
             return relationship_list
         
-        qualified_list = []
-        for name in relationship_list:
-            if name in duplicate_names:
-                # Convert to qualified name if this name has duplicates
-                if index_cache and 'files' in index_cache:
-                    # Try to find the actual file where this name is defined
-                    # For now, we'll use the current file path as context
-                    qualified_name = generate_qualified_name(file_path, name)
-                    qualified_list.append(qualified_name)
-                else:
-                    # Fallback: keep original name if we can't resolve
-                    qualified_list.append(name)
-            else:
-                # No duplicates, keep original name
-                qualified_list.append(name)
-        
-        return qualified_list
+        # This function is now a no-op, as qnames are expected to be pre-generated.
+        # It can be removed later if confirmed to be unused.
+        return relationship_list
     
     @staticmethod
     def _get_duplicate_names_from_index(index_cache: Optional[Dict[str, Any]] = None) -> Dict[str, set]:

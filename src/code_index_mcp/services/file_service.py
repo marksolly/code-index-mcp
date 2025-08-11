@@ -10,7 +10,7 @@ from typing import Dict, Any
 
 from .base_service import BaseService
 from ..utils import ResponseFormatter
-from ..indexing.qualified_names import normalize_file_path
+from ..utils.qualified_names import normalize_file_path
 
 
 class FileService(BaseService):

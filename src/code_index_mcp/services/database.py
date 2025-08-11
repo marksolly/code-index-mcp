@@ -123,6 +123,7 @@ class DatabaseService:
                 source_symbol_id INTEGER NOT NULL,
                 target_symbol_id INTEGER NOT NULL,
                 type_id INTEGER NOT NULL,
+                confidence REAL DEFAULT 1.0,
                 FOREIGN KEY (source_symbol_id) REFERENCES code_symbols(id) ON DELETE CASCADE,
                 FOREIGN KEY (target_symbol_id) REFERENCES code_symbols(id) ON DELETE CASCADE,
                 FOREIGN KEY (type_id) REFERENCES relationship_types(id)
@@ -139,8 +140,8 @@ class DatabaseService:
             cursor.execute(statement)
 
         # Pre-populate lookup tables
-        symbol_types = ['file', 'function', 'class', 'constant', 'import']
-        relationship_types = ['calls', 'imports', 'inherits', 'instantiates', 'contains_method']
+        symbol_types = ['file', 'function', 'class', 'constant', 'import', 'global', 'variable', 'export', 'namespace']
+        relationship_types = ['calls', 'imports', 'inherits', 'instantiates', 'contains_method', 'references_variable', 'overrides', 'exports_to', 'defines_namespace']
 
         for s_type in symbol_types:
             cursor.execute("INSERT OR IGNORE INTO symbol_types (name) VALUES (?)", (s_type,))
