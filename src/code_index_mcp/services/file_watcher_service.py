@@ -10,6 +10,7 @@ It uses the watchdog library for cross-platform file system event monitoring.
 import logging
 import os
 import traceback
+import pathspec
 from threading import Timer
 from typing import Optional, Callable
 from pathlib import Path
@@ -345,6 +346,17 @@ class DebounceEventHandler(FileSystemEventHandler):
         # Convert supported extensions to set for faster lookup
         self.supported_extensions = set(SUPPORTED_EXTENSIONS)
 
+    def _load_ignore_spec(self) -> Optional[pathspec.PathSpec]:
+        """Load .indexerignore file and return a PathSpec object."""
+        ignore_file = self.base_path / '.indexerignore'
+        if ignore_file.is_file():
+            try:
+                with open(ignore_file, 'r', encoding='utf-8') as f:
+                    return pathspec.PathSpec.from_lines('gitwildmatch', f)
+            except (OSError, UnicodeDecodeError):
+                return None
+        return None
+
     def on_any_event(self, event: FileSystemEvent) -> None:
         """
         Handle any file system event.
@@ -445,6 +457,11 @@ class DebounceEventHandler(FileSystemEventHandler):
         """
         try:
             relative_path = path.relative_to(self.base_path)
+
+            # Check against .indexerignore first
+            if self.ignore_spec and self.ignore_spec.match_file(str(relative_path)):
+                return True
+
             parts = relative_path.parts
 
             # Check if any part of the path matches exclusion patterns

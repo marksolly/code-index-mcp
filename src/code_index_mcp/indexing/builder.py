@@ -160,7 +160,7 @@ class IndexBuilder:
 
         try:
             # Step 1: Scan project directory
-            scanner = ProjectScanner(project_path)
+            scanner = ProjectScanner(project_path, generate_log_file)
             scan_result = scanner.scan_project()
 
             # Step 2: Read file contents and analyze in parallel

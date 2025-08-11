@@ -71,6 +71,11 @@ def setup_arg_parser():
     index_parser.add_argument(
         "--path", type=str, required=True, help="The project path to index."
     )
+    index_parser.add_argument(
+        "--generate-log-file",
+        action="store_true",
+        help="Default false. Generate a log file with details of the file scan."
+    )
 
     # 'call' command
     call_parser = subparsers.add_parser(
@@ -91,6 +96,11 @@ def setup_arg_parser():
         default=".",
         help="The project path to use for the tool call.",
     )
+    call_parser.add_argument(
+        "--generate-log-file",
+        action="store_true",
+        help="Default false. Generate a log file if indexing is triggered."
+    )
 
     return parser
 
@@ -109,7 +119,7 @@ async def main():
             tool_name = "set_project_path"
             if tool_name in service_mapping:
                 service_method, is_async = service_mapping[tool_name]
-                params = {'path': args.path}
+                params = {'path': args.path, 'generate_log_file': args.generate_log_file}
                 if is_async:
                     response = await service_method(**params)
                 else:
@@ -123,9 +133,9 @@ async def main():
             # Set the project path first to ensure context is initialized
             set_path_method, is_async_set_path = service_mapping["set_project_path"]
             if is_async_set_path:
-                await set_path_method(path=args.path)
+                await set_path_method(path=args.path, generate_log_file=args.generate_log_file)
             else:
-                set_path_method(path=args.path)
+                set_path_method(path=args.path, generate_log_file=args.generate_log_file)
 
             tool_name = args.tool_name
             if tool_name not in service_mapping:

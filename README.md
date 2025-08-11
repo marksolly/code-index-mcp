@@ -149,10 +149,12 @@ Build the initial index and tell the MCP server where the codebase is located.
 Ask your coding assistant to:
 
 ```
-Set the code-index project path to /Users/dev/my-react-app
+Set the code-index project path to /Users/dev/my-react-app and generate a log file.
 ```
 
-*Automatically indexes your codebase and creates searchable cache*
+*Automatically indexes your codebase and creates searchable cache while generating an .indexer.log file for you to verify*
+
+- **🚫 `.indexerignore` Support**: Create this file in your project root to exclude files and directories from indexing and search using gitignore-style patterns.
 
 ## Find Context Fast
 
