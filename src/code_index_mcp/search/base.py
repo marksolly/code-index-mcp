@@ -12,7 +12,7 @@ import sys
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Tuple, Any
 
-from ..indexing.qualified_names import normalize_file_path
+from ..utils.qualified_names import normalize_file_path
 
 def parse_search_output(output: str, base_path: str) -> Dict[str, List[Tuple[int, str]]]:
     """
@@ -193,4 +193,3 @@ class SearchStrategy(ABC):
             A dictionary mapping filenames to lists of (line_number, line_content) tuples.
         """
         pass
-

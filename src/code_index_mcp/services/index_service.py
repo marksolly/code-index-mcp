@@ -16,7 +16,7 @@ from typing import Dict, Any
 from mcp.server.fastmcp import Context
 
 from .base_service import BaseService
-from ..utils import ValidationHelper, ResponseFormatter
+from ..utils import ValidationHelper
 
 
 class IndexService(BaseService):
@@ -102,6 +102,7 @@ class IndexService(BaseService):
         Raises:
             ValueError: If project is not set up or pattern is invalid
         """
+        from ..utils import ResponseFormatter
         self._require_project_setup()
 
         # Validate glob pattern
@@ -160,40 +161,43 @@ class IndexService(BaseService):
         Deletes existing data and re-indexes the file.
         """
         self.logger.info(f"Incrementally updating index for: {file_path}")
-        
+
         close_db_service = False
         if db_service is None:
             db_path = self.settings.get_db_path()
             db_service = DatabaseService(db_path)
             db_service.connect()
             close_db_service = True
+        
         try:
             # First, remove existing data for this file
             self.remove_file(file_path, db_service)
 
             # Now, re-index the single file
             from ..indexing import IndexBuilder
-            builder = IndexBuilder(db_service)
-
-            # We need to create a FileInfo object for the analyzer
-            from ..indexing.models import FileInfo
             from ..indexing.scanner import get_file_info
+            
+            builder = IndexBuilder(db_service)
+            builder.project_path = self.base_path
 
             try:
                 file_info = get_file_info(self.base_path, file_path)
                 if file_info:
                     analysis_results = builder._analyze_files([file_info])
-                    relationships = builder.relationship_tracker.build_relationships(analysis_results)
-                    builder._assemble_and_write_index(None, analysis_results, relationships)
+                    builder.graph_builder.build_graph(analysis_results)
                     self.logger.info(f"Successfully updated index for: {file_path}")
                 else:
-                    self.logger.warning(f"Could not get file info for: {file_path}")
+                    self.logger.warning(f"Could not get file info for: {file_path}, skipping update.")
+            
             except FileNotFoundError:
                 self.logger.warning(f"File not found during update: {file_path}, assuming it was deleted.")
                 self.remove_file(file_path, db_service)
+            except Exception as e:
+                self.logger.error(f"Error updating index for {file_path}: {e}")
 
         finally:
-            db_service.close()
+            if close_db_service:
+                db_service.close()
 
     def remove_file(self, file_path: str, db_service=None):
         """

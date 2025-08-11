@@ -10,7 +10,6 @@ import tempfile
 from typing import Dict, Any
 
 from .base_service import BaseService
-from ..utils import ResponseFormatter
 from ..constants import SETTINGS_DIR
 
 
@@ -35,6 +34,7 @@ def manage_temp_directory(action: str) -> Dict[str, Any]:
 
     temp_dir = os.path.join(tempfile.gettempdir(), SETTINGS_DIR)
 
+    from ..utils import ResponseFormatter
     if action == 'create':
         existed_before = os.path.exists(temp_dir)
 
@@ -119,6 +119,7 @@ class SettingsService(BaseService):
         """
         temp_dir = os.path.join(tempfile.gettempdir(), SETTINGS_DIR)
 
+        from ..utils import ResponseFormatter
         # Check if base_path is set
         if not self.base_path:
             return ResponseFormatter.settings_info_response(
@@ -177,5 +178,5 @@ class SettingsService(BaseService):
             stats_data = {"error": "Settings not available"}
         else:
             stats_data = self.settings.get_stats()
-
+        from ..utils import ResponseFormatter
         return ResponseFormatter.stats_response(stats_data)

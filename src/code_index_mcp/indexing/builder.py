@@ -33,19 +33,12 @@ class GraphBuilder:
 
             # Create symbols for classes first, so they are available for method qnames
             for a_class in result.classes:
-                self._get_or_create_symbol(
-                    cursor, file_id, a_class, "class", file_info=result.file_info
-                )
+                self._get_or_create_symbol(cursor, file_id, a_class, "class")
 
             # Create symbols for functions, determining qname based on class scope
             for function in result.functions:
                 source_id = self._get_or_create_symbol(
-                    cursor,
-                    file_id,
-                    function,
-                    "function",
-                    file_info=result.file_info,
-                    classes=result.classes,
+                    cursor, file_id, function, "function"
                 )
                 for call in function.calls:
                     target_ids = self._find_symbol(cursor, call)
@@ -76,43 +69,14 @@ class GraphBuilder:
         )
         return cursor.lastrowid
 
-    def _generate_qname(
-        self,
-        symbol_info: Any,
-        symbol_type: str,
-        file_info: FileInfo,
-        classes: Optional[List[ClassInfo]] = None,
-    ) -> str:
-        """Generates a qualified name (qname) for a symbol."""
-        if symbol_type == "function":
-            if classes:
-                for a_class in classes:
-                    # This assumes method names are stored in `a_class.methods`
-                    if hasattr(a_class, "methods") and any(
-                        m.name == symbol_info.name for m in a_class.methods
-                    ):
-                        # Primary Rule: Enclosing scope (e.g., `User.save`)
-                        return f"{a_class.name}.{symbol_info.name}"
-            # Fallback Rule: File name (e.g., `audit.py:log_event`)
-            return f"{Path(file_info.path).name}:{symbol_info.name}"
-
-        if symbol_type == "class":
-            # Fallback Rule for top-level symbols
-            return f"{Path(file_info.path).name}:{symbol_info.name}"
-
-        # Default for other types (e.g., imports, variables)
-        return symbol_info.name
-
     def _get_or_create_symbol(
         self,
         cursor,
         file_id: int,
         symbol_info: Any,
         symbol_type: str,
-        file_info: FileInfo,
-        classes: Optional[List[ClassInfo]] = None,
     ) -> int:
-        qname = self._generate_qname(symbol_info, symbol_type, file_info, classes)
+        qname = symbol_info.qname
 
         if (file_id, qname) in self.symbol_cache:
             return self.symbol_cache[(file_id, qname)]

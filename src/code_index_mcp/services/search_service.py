@@ -11,7 +11,7 @@ from typing import Dict, Any, Optional, List, Tuple
 
 from .base_service import BaseService
 from .database import DatabaseService
-from ..utils import ValidationHelper, ResponseFormatter
+from ..utils import ValidationHelper
 from ..indexing.models import FileInfo, FunctionInfo, ClassInfo, ImportInfo, FileAnalysisResult
 
 
@@ -97,6 +97,7 @@ class SearchService(BaseService):
                 fuzzy=fuzzy,
                 regex=regex
             )
+            from ..utils import ResponseFormatter
             return ResponseFormatter.search_results_response(results)
         except Exception as e:
             raise ValueError(f"Search failed using '{strategy.name}': {e}") from e
@@ -265,7 +266,8 @@ class SearchService(BaseService):
             if 'all' in include_context or 'relationships' in include_context:
                 rel_query = f"""
                     SELECT r.source_symbol_id, r.target_symbol_id, rt.name as rel_type,
-                           s_target.name as target_name, s_target.type_id as target_type_id,
+                           r.confidence, s_target.name as target_name,
+                           s_target.type_id as target_type_id,
                            st_target.name as target_symbol_type
                     FROM relationships r
                     JOIN relationship_types rt ON r.type_id = rt.id
@@ -281,12 +283,14 @@ class SearchService(BaseService):
                     relationships_map['outgoing'][source_id].append({
                         'type': row['rel_type'],
                         'target_name': row['target_name'],
-                        'target_type': row['target_symbol_type']
+                        'target_type': row['target_symbol_type'],
+                        'confidence': row['confidence']
                     })
 
                 inv_rel_query = f"""
                     SELECT r.target_symbol_id, r.source_symbol_id, rt.name as rel_type,
-                           s_source.name as source_name, s_source.type_id as source_type_id,
+                           r.confidence, s_source.name as source_name,
+                           s_source.type_id as source_type_id,
                            st_source.name as source_symbol_type
                     FROM relationships r
                     JOIN relationship_types rt ON r.type_id = rt.id
@@ -302,7 +306,8 @@ class SearchService(BaseService):
                     relationships_map['incoming'][target_id].append({
                         'type': row['rel_type'],
                         'source_name': row['source_name'],
-                        'source_type': row['source_symbol_type']
+                        'source_type': row['source_symbol_type'],
+                        'confidence': row['confidence']
                     })
 
             # Format output
@@ -344,7 +349,8 @@ class SearchService(BaseService):
                             if target_type not in rel_groups[rel_type]:
                                 rel_groups[rel_type][target_type] = []
                             
-                            rel_groups[rel_type][target_type].append(rel['target_name'])
+                            confidence_marker = " ?" if rel.get('confidence', 1.0) < 0.5 else ""
+                            rel_groups[rel_type][target_type].append(f"{rel['target_name']}{confidence_marker}")
 
                         for rel_type, type_groups in rel_groups.items():
                             output_lines.append(f"  -> {rel_type}:")
@@ -365,7 +371,8 @@ class SearchService(BaseService):
                             if source_type not in rel_groups[rel_type]:
                                 rel_groups[rel_type][source_type] = []
 
-                            rel_groups[rel_type][source_type].append(rel['source_name'])
+                            confidence_marker = " ?" if rel.get('confidence', 1.0) < 0.5 else ""
+                            rel_groups[rel_type][source_type].append(f"{rel['source_name']}{confidence_marker}")
 
                         for rel_type, type_groups in rel_groups.items():
                             output_lines.append(f"  <- {rel_type}:")

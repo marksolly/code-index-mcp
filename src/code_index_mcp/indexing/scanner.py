@@ -320,3 +320,36 @@ class ProjectScanner:
             'total_files': len(file_list),
             'total_lines': total_lines
         }
+
+def get_file_info(base_path: str, file_path: str) -> FileInfo | None:
+    """
+    Get FileInfo for a single file.
+
+    Args:
+        base_path: The absolute path to the project root.
+        file_path: The relative path to the file from the project root.
+
+    Returns:
+        A FileInfo object, or None if the file cannot be accessed.
+    """
+    full_path = Path(base_path) / file_path
+    if not full_path.exists():
+        return None
+
+    try:
+        stat = full_path.stat()
+        extension = full_path.suffix.lower()
+        
+        # Create a temporary scanner to reuse the language detection logic
+        scanner = ProjectScanner(base_path)
+        
+        return FileInfo(
+            id=0,  # ID is not critical for single-file updates
+            path=file_path,
+            size=stat.st_size,
+            modified_time=datetime.fromtimestamp(stat.st_mtime),
+            extension=extension,
+            language=scanner._detect_language(extension)
+        )
+    except (OSError, PermissionError):
+        return None

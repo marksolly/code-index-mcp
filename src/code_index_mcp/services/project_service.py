@@ -11,7 +11,7 @@ import json
 from mcp.server.fastmcp import Context
 
 from .base_service import BaseService
-from ..utils import ValidationHelper, ResponseFormatter
+from ..utils import ValidationHelper
 from ..constants import SUPPORTED_EXTENSIONS
 
 
@@ -294,6 +294,7 @@ class ProjectService(BaseService):
         Raises:
             ValueError: If project is not configured
         """
+        from ..utils import ResponseFormatter
         # Check if base_path is set
         if not self.base_path:
             config_data = {

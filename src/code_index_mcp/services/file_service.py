@@ -9,7 +9,6 @@ import os
 from typing import Dict, Any
 
 from .base_service import BaseService
-from ..utils import ResponseFormatter
 from ..utils.qualified_names import normalize_file_path
 
 
@@ -78,6 +77,7 @@ class FileService(BaseService):
         Raises:
             ValueError: If project is not set up, file path is invalid, or file not in index
         """
+        from ..utils import ResponseFormatter
         self._require_project_setup()
         self._require_valid_file_path(file_path)
 

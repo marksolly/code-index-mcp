@@ -5,6 +5,7 @@ Shared constants for the Code Index MCP server.
 # Directory and file names
 SETTINGS_DIR = "code_indexer"
 CONFIG_FILE = "config.json"
+INDEX_FILE = "index.json"
 
 # Supported languages and their corresponding file extensions
 SUPPORTED_LANGUAGES = {
