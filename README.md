@@ -6,137 +6,75 @@
 [![Python](https://img.shields.io/badge/Python-3.10%2B-green)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 
-**Intelligent code indexing and analysis for Large Language Models**
+**Code Index & Deep Search For AI Coding Assistants**
 
-Transform how AI understands your codebase with advanced search, analysis, and navigation capabilities.
+Gives your AI coding tool deep insight into your large codebase without burning huge numbers of tokens.
+
+Designed for codebases spanning 100,000+ lines of code and thousands of files.
 
 </div>
 
-<a href="https://glama.ai/mcp/servers/@johnhuang316/code-index-mcp">
-  <img width="380" height="200" src="https://glama.ai/mcp/servers/@johnhuang316/code-index-mcp/badge" alt="code-index-mcp MCP server" />
-</a>
+## Table of Contents
+
+- [Overview](#overview)
+- [Use Cases](#use-cases)
+- [Quick Start](#quick-start)
+- [Usage Examples](#usage-examples)
+- [Available Tools](#available-tools)
+- [Troubleshooting](#troubleshooting)
+- [Development & Contributing](#development--contributing)
+- [License](#license)
 
 ## Overview
 
-Code Index MCP is a [Model Context Protocol](https://modelcontextprotocol.io) server that bridges the gap between AI models and complex codebases. It provides intelligent indexing, advanced search capabilities, and detailed code analysis to help AI assistants understand and navigate your projects effectively.
+Code Index MCP is a [Model Context Protocol](https://modelcontextprotocol.io) server that bridges the gap between AI models and complex codebases.
 
-**Perfect for:** Code review, refactoring, documentation generation, debugging assistance, and architectural analysis.
+When codebases grow large or when working across multiple repos it can be difficult for AI code assistants to understand the full scope of requests or the full impact of changes they make.
 
-## Key Features
+This MCP server maintains an index your code base and makes fast, token effient, code-graph search tools available.
 
-### 🔍 **Intelligent Search & Analysis**
-- **Advanced Search**: Auto-detects and uses the best available tool (ugrep, ripgrep, ag, or grep)
-- **Regex Support**: Full regex pattern matching with ReDoS attack prevention
-- **Fuzzy Search**: True fuzzy matching with edit distance (ugrep) or word boundary patterns
-- **File Analysis**: Deep insights into structure, imports, classes, methods, and complexity metrics
+## Use Cases
 
-### 🗂️ **Multi-Language Support**
-- **Mainstream Languages**: Java, Python, JavaScript/TypeScript, C/C++, Go, Rust, C#
-- **Mobile Development**: Swift, Kotlin, Objective-C/C++, React Native
-- **Web Frontend**: Vue, React, Svelte, Astro, HTML, CSS, SCSS
-- **Database**: SQL (MySQL, PostgreSQL, SQLite), NoSQL, stored procedures, migrations
-- **Scripting**: Ruby, PHP, Shell, PowerShell, Bash
-- **Systems**: C/C++, Rust, Go, Zig
-- **JVM Ecosystem**: Java, Kotlin, Scala, Groovy
-- **Others**: Lua, Perl, R, MATLAB, configuration files
-- **50+ File Types Total** - [View complete list](#supported-file-types)
+### Discovery
 
-### ⚡ **Real-time Monitoring & Auto-refresh**
-- **File Watcher**: Automatic index updates when files change
-- **Cross-platform**: Native OS file system monitoring (inotify, FSEvents, ReadDirectoryChangesW)
-- **Smart Debouncing**: Batches rapid changes to prevent excessive rebuilds (default: 6 seconds)
-- **Thread-safe**: Non-blocking background operations with ThreadPoolExecutor
+When a user asks an abstract question about a codebase, the tools provided by this MCP server allow AI agents to rapidly find relevant code without resorting to slow full text searches. Reduces the need to include a large number of files with the users initial request.
 
-### ⚡ **Performance & Efficiency**
-- **Smart Indexing**: Recursively scans with intelligent filtering of build directories
-- **Persistent Caching**: Stores indexes for lightning-fast subsequent access
-- **Lazy Loading**: Tools detected only when needed for optimal startup
-- **Memory Efficient**: Intelligent caching strategies for large codebases
+### Finding Relationships
 
-## Supported File Types
+Helps AI coding tools quickly identify how the component they are working on relates to the rest of the code base.
 
-<details>
-<summary><strong>📁 Programming Languages (Click to expand)</strong></summary>
+**Example**
 
-**System & Low-Level:**
-- C/C++ (`.c`, `.cpp`, `.h`, `.hpp`)
-- Rust (`.rs`)
-- Zig (`.zig`)
-- Go (`.go`)
+When modifying a method name in a class, a single query to `find_symbols` will return a compact graph showing what other parts of the codebase call that method inside that class.
 
-**Object-Oriented:**
-- Java (`.java`)
-- C# (`.cs`)
-- Kotlin (`.kt`)
-- Scala (`.scala`)
-- Objective-C/C++ (`.m`, `.mm`)
-- Swift (`.swift`)
+### **Multi-Language Support**
 
-**Scripting & Dynamic:**
-- Python (`.py`)
-- JavaScript/TypeScript (`.js`, `.ts`, `.jsx`, `.tsx`, `.mjs`, `.cjs`)
-- Ruby (`.rb`)
-- PHP (`.php`)
-- Shell (`.sh`, `.bash`)
+Code Index MCP supports:
 
-</details>
-
-<details>
-<summary><strong>🌐 Web & Frontend (Click to expand)</strong></summary>
-
-**Frameworks & Libraries:**
-- Vue (`.vue`)
-- Svelte (`.svelte`)
-- Astro (`.astro`)
-
-**Styling:**
-- CSS (`.css`, `.scss`, `.less`, `.sass`, `.stylus`, `.styl`)
-- HTML (`.html`)
-
-**Templates:**
-- Handlebars (`.hbs`, `.handlebars`)
-- EJS (`.ejs`)
-- Pug (`.pug`)
-
-</details>
-
-<details>
-<summary><strong>🗄️ Database & SQL (Click to expand)</strong></summary>
-
-**SQL Variants:**
-- Standard SQL (`.sql`, `.ddl`, `.dml`)
-- Database-specific (`.mysql`, `.postgresql`, `.psql`, `.sqlite`, `.mssql`, `.oracle`, `.ora`, `.db2`)
-
-**Database Objects:**
-- Procedures & Functions (`.proc`, `.procedure`, `.func`, `.function`)
-- Views & Triggers (`.view`, `.trigger`, `.index`)
-
-**Migration & Tools:**
-- Migration files (`.migration`, `.seed`, `.fixture`, `.schema`)
-- Tool-specific (`.liquibase`, `.flyway`)
-
-**NoSQL & Modern:**
-- Graph & Query (`.cql`, `.cypher`, `.sparql`, `.gql`)
-
-</details>
-
-<details>
-<summary><strong>📄 Documentation & Config (Click to expand)</strong></summary>
-
-- Markdown (`.md`, `.mdx`)
-- Configuration (`.json`, `.xml`, `.yml`, `.yaml`)
-
-</details>
+- Python
+- JavaScript
+- TypeScript
+- Java
+- C++
+- C#
+- Go
+- Ruby
+- PHP
+- Swift
+- Rust
+- HTML
+- CSS
 
 ## Quick Start
 
-### 🚀 **Recommended Setup (Most Users)**
+### **Recommended Setup (Most Users)**
 
-The easiest way to get started with any MCP-compatible application:
+Known to work with Claude and Cline.
 
 **Prerequisites:** Python 3.10+ and [uv](https://github.com/astral-sh/uv)
 
 1. **Add to your MCP configuration** (e.g., `claude_desktop_config.json` or `~/.claude.json`):
+
    ```json
    {
      "mcpServers": {
@@ -147,7 +85,6 @@ The easiest way to get started with any MCP-compatible application:
      }
    }
    ```
-
 2. **Restart your application** – `uvx` automatically handles installation and execution
 
 ### 🛠️ **Development Setup**
@@ -155,13 +92,12 @@ The easiest way to get started with any MCP-compatible application:
 For contributing or local development:
 
 1. **Clone and install:**
-   ```bash
-   git clone https://github.com/johnhuang316/code-index-mcp.git
-   cd code-index-mcp
-   uv sync
-   ```
 
+   ```bash
+   git clone https://github.com/marksolly
+   ```
 2. **Configure for local development:**
+
    ```json
    {
      "mcpServers": {
@@ -172,8 +108,8 @@ For contributing or local development:
      }
    }
    ```
-
 3. **Debug with MCP Inspector:**
+
    ```bash
    npx @modelcontextprotocol/inspector uv run code-index-mcp
    ```
@@ -188,6 +124,7 @@ pip install code-index-mcp
 ```
 
 Then configure:
+
 ```json
 {
   "mcpServers": {
@@ -201,96 +138,110 @@ Then configure:
 
 </details>
 
-## Available Tools
-
-### 🏗️ **Project Management**
-| Tool | Description |
-|------|-------------|
-| **`set_project_path`** | Initialize indexing for a project directory |
-| **`refresh_index`** | Rebuild the project index after file changes |
-| **`get_settings_info`** | View current project configuration and status |
-
-### 🔍 **Search & Discovery**
-| Tool | Description |
-|------|-------------|
-| **`search_code_advanced`** | Smart search with regex, fuzzy matching, and file filtering |
-| **`find_files`** | Locate files using glob patterns (e.g., `**/*.py`) |
-| **`get_file_summary`** | Analyze file structure, functions, imports, and complexity |
-
-### 🔄 **Monitoring & Auto-refresh**
-| Tool | Description |
-|------|-------------|
-| **`get_file_watcher_status`** | Check file watcher status and configuration |
-| **`configure_file_watcher`** | Enable/disable auto-refresh and configure settings |
-
-### 🛠️ **System & Maintenance**
-| Tool | Description |
-|------|-------------|
-| **`create_temp_directory`** | Set up storage directory for index data |
-| **`check_temp_directory`** | Verify index storage location and permissions |
-| **`clear_settings`** | Reset all cached data and configurations |
-| **`refresh_search_tools`** | Re-detect available search tools (ugrep, ripgrep, etc.) |
-
 ## Usage Examples
 
-### 🎯 **Quick Start Workflow**
+### **Quick Start Workflow**
 
 **1. Initialize Your Project**
+
+Build the initial index and tell the MCP server where the codebase is located.
+
+Ask your coding assistant to:
+
 ```
-Set the project path to /Users/dev/my-react-app
+Set the code-index project path to /Users/dev/my-react-app
 ```
+
 *Automatically indexes your codebase and creates searchable cache*
 
-**2. Explore Project Structure**
+## Find Context Fast
+
+To quickly understand and navigate this project's codebase using an AI code assistant, leverage the `find_symbols` tool for its speed and efficiency in identifying code structures.
+
+This tool returns a dense, token effient representation of how the matching symbols relate to the overall codebase.
+
+**Sample Response**
 ```
-Find all TypeScript component files in src/components
+[function] get_user(user_id: int)
+  -> calls: db.query, logger.info
+  <- called_by: get_user_profile, update_user_settings
+  |> in: src/services/user_service.py
+
+[file] src/services/user_service.py
+  - contains: get_user, update_user, delete_user
+  <- imported_by: src/api/v1/users.py
+
+[class] User
+  - inherits: BaseModel
+  - contains: to_dict(), from_dict(data)
+  -> instantiated_in: create_user, get_user_profile
+  |> in: src/models/user.py
+
+[import] fastapi
+  <- imported_by: src/server.py, src/api/v1/users.py
+  |> in: fastapi
+
+[constant] MAX_RETRIES
+  -> used_in: retry_operation
+  |> in: src/config.py
 ```
-*Uses: `find_files` with pattern `src/components/**/*.tsx`*
+
+### Example 1: Discovering Core Components
+
+*   **User Request to AI**: "I'm new to this user management system. Can you tell me which are the most important classes in this project?"
+*   **AI Assistant Tool Usage**:
+    ```
+    find_symbols pattern="class*" symbol_type=["class"]
+    ```
+    This provides a quick overview of all class definitions, such as `Person`, `User`, `UserRole`, `UserStatus`, `UserManager`, `AuthService`, etc., helping the user grasp the core building blocks.
+
+### Example 2: Locating Specific Functionality
+
+*   **User Request to AI**: "I need to find where user creation logic is implemented. Look for functions related to creating users."
+*   **AI Assistant Tool Usage**:
+    ```
+    find_symbols pattern="create*" symbol_type=["function"]
+    ```
+    This would pinpoint functions like `create_user` within `user_manager.py`, allowing the user to quickly locate the relevant code for user creation.
+
+**Example 3: Exploring File-Specific Logic
+
+*   **User Request to AI**: "Show me all the functions defined in the `auth_service.py` file to understand the authentication mechanisms."
+*   **AI Assistant  Tool Usage**:
+    ```bash
+    find_symbols pattern="*" path_pattern="**/auth_service.py" symbol_type=["function"]
+    ```
+    This narrows down the search to functions within a specific file, revealing authentication-related functions like `authenticate`, `login`, `logout`, `create_session`, etc.
+
+### Example 4: Identifying Method Definitions within a Class
+
+*   **User Request to AI**: "I'm looking at the `User` class. What methods are defined within it, particularly around password management?"
+*   **AI Assistant Action**:
+    ```bash
+    find_symbols pattern="User.*" symbol_type=["method"] # Assuming 'method' is a discoverable type or part of a class name
+    # Or, if methods are listed under classes:
+    find_symbols pattern="set_password|check_password" symbol_type=["function"]
+    ```
+    This helps in discovering methods like `set_password`, `check_password`, etc., directly associated with the `User` class or its functionality.
+
+By using these `find_symbols` commands, an AI assistant can efficiently guide a user through the codebase, helping them quickly locate relevant classes, functions, and methods based on their specific queries.
 
 **3. Analyze Key Files**
+
 ```
 Give me a summary of src/api/userService.ts
 ```
+
 *Uses: `get_file_summary` to show functions, imports, and complexity*
 
-### 🔍 **Advanced Search Examples**
-
 <details>
-<summary><strong>Code Pattern Search</strong></summary>
 
-```
-Search for all function calls matching "get.*Data" using regex
-```
-*Finds: `getData()`, `getUserData()`, `getFormData()`, etc.*
-
-</details>
-
-<details>
-<summary><strong>Fuzzy Function Search</strong></summary>
-
-```
-Find authentication-related functions with fuzzy search for 'authUser'
-```
-*Matches: `authenticateUser`, `authUserToken`, `userAuthCheck`, etc.*
-
-</details>
-
-<details>
-<summary><strong>Language-Specific Search</strong></summary>
-
-```
-Search for "API_ENDPOINT" only in Python files
-```
-*Uses: `search_code_advanced` with `file_pattern: "*.py"`*
-
-</details>
-
-<details>
 <summary><strong>Auto-refresh Configuration</strong></summary>
 
 ```
 Configure automatic index updates when files change
 ```
+
 *Uses: `configure_file_watcher` to enable/disable monitoring and set debounce timing*
 
 </details>
@@ -301,22 +252,63 @@ Configure automatic index updates when files change
 ```
 I added new components, please refresh the project index
 ```
+
 *Uses: `refresh_index` to update the searchable cache*
 
 </details>
 
+## Available Tools
+
+### **Project Management**
+
+
+| Tool                    | Description                                   |
+| ------------------------- | ----------------------------------------------- |
+| **`set_project_path`**  | Initialize indexing for a project directory   |
+| **`refresh_index`**     | Rebuild the project index after file changes  |
+| **`get_settings_info`** | View current project configuration and status |
+
+### **Search & Discovery**
+
+
+| Tool                       | Description                                                 |
+| ---------------------------- | ------------------------------------------------------------- |
+| **`search_code_advanced`** | Smart search with regex, fuzzy matching, and file filtering |
+| **`find_files`**           | Locate files using glob patterns (e.g.,`**/*.py`)           |
+| **`get_file_summary`**     | Analyze file structure, functions, imports, and complexity  |
+
+### **Monitoring & Auto-refresh**
+
+
+| Tool                          | Description                                        |
+| ------------------------------- | ---------------------------------------------------- |
+| **`get_file_watcher_status`** | Check file watcher status and configuration        |
+| **`configure_file_watcher`**  | Enable/disable auto-refresh and configure settings |
+
+### **System & Maintenance**
+
+
+| Tool                        | Description                                             |
+| ----------------------------- | --------------------------------------------------------- |
+| **`create_temp_directory`** | Set up storage directory for index data                 |
+| **`check_temp_directory`**  | Verify index storage location and permissions           |
+| **`clear_settings`**        | Reset all cached data and configurations                |
+| **`refresh_search_tools`**  | Re-detect available search tools (ugrep, ripgrep, etc.) |
+
 ## Troubleshooting
 
-### 🔄 **Auto-refresh Not Working**
+### **Auto-refresh Not Working**
 
 If automatic index updates aren't working when files change, try:
+
 - `pip install watchdog` (may resolve environment isolation issues)
 - Use manual refresh: Call the `refresh_index` tool after making file changes
 - Check file watcher status: Use `get_file_watcher_status` to verify monitoring is active
 
 ## Development & Contributing
 
-### 🔧 **Building from Source**
+### **Building from Source**
+
 ```bash
 git clone https://github.com/johnhuang316/code-index-mcp.git
 cd code-index-mcp
@@ -324,19 +316,18 @@ uv sync
 uv run code-index-mcp
 ```
 
-### 🐛 **Debugging**
+### **Debugging**
+
 ```bash
 npx @modelcontextprotocol/inspector uvx code-index-mcp
 ```
 
-### 🤝 **Contributing**
+### **Contributing**
+
 Contributions are welcome! Please feel free to submit a Pull Request.
 
 ---
 
-### 📜 **License**
-[MIT License](LICENSE)
+### **License**
 
-### 🌐 **Translations**
-- [繁體中文](README_zh.md)
-- [日本語](README_ja.md)
+[MIT License](LICENSE)
