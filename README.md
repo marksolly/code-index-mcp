@@ -1,4 +1,4 @@
-# Code Index MCP
+# Code Scope MCP
 
 <div align="center">
 
@@ -6,7 +6,7 @@
 [![Python](https://img.shields.io/badge/Python-3.10%2B-green)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 
-**Code Index & Deep Search For AI Coding Assistants**
+**Code Scope: Graph-Powered Code Explorer for LLMs**
 
 Gives your AI coding tool deep insight into your large codebase without burning huge numbers of tokens.
 
@@ -27,13 +27,19 @@ Designed for codebases spanning 100,000+ lines of code and thousands of files.
 
 ## Overview
 
-Code Index MCP is a [Model Context Protocol](https://modelcontextprotocol.io) server that bridges the gap between AI models and complex codebases.
+Code Scope MCP is a [Model Context Protocol](https://modelcontextprotocol.io) server that bridges the gap between AI models and complex codebases.
 
 When codebases grow large or when working across multiple repos it can be difficult for AI code assistants to understand the full scope of requests or the full impact of changes they make.
 
-This MCP server maintains an index your code base and makes fast, token effient, code-graph search tools available.
+This MCP server maintains an index your code base and makes fast, token efficient, code-graph search and reporting tools available.
 
 ## Use Cases
+
+Helps your AI tools answer these questions:
+
+- Where is the thing the user is asking about?
+- How does this thing relate to the codebase?
+- What are the consequences of changing this thing?
 
 ### Discovery
 
@@ -47,123 +53,9 @@ Helps AI coding tools quickly identify how the component they are working on rel
 
 When modifying a method name in a class, a single query to `find_symbols` will return a compact graph showing what other parts of the codebase call that method inside that class.
 
-### **Multi-Language Support**
-
-Code Index MCP supports:
-
-- Python
-- JavaScript
-- TypeScript
-- Java
-- C++
-- C#
-- Go
-- Ruby
-- PHP
-- Swift
-- Rust
-- HTML
-- CSS
-
-## Quick Start
-
-### **Recommended Setup (Most Users)**
-
-Known to work with Claude and Cline.
-
-**Prerequisites:** Python 3.10+ and [uv](https://github.com/astral-sh/uv)
-
-1. **Add to your MCP configuration** (e.g., `claude_desktop_config.json` or `~/.claude.json`):
-
-   ```json
-   {
-     "mcpServers": {
-       "code-index": {
-         "command": "uvx",
-         "args": ["code-index-mcp"]
-       }
-     }
-   }
-   ```
-2. **Restart your application** – `uvx` automatically handles installation and execution
-
-### 🛠️ **Development Setup**
-
-For contributing or local development:
-
-1. **Clone and install:**
-
-   ```bash
-   git clone https://github.com/marksolly
-   ```
-2. **Configure for local development:**
-
-   ```json
-   {
-     "mcpServers": {
-       "code-index": {
-         "command": "uv",
-         "args": ["run", "code-index-mcp"]
-       }
-     }
-   }
-   ```
-3. **Debug with MCP Inspector:**
-
-   ```bash
-   npx @modelcontextprotocol/inspector uv run code-index-mcp
-   ```
-
-<details>
-<summary><strong>Alternative: Manual pip Installation</strong></summary>
-
-If you prefer traditional pip management:
-
-```bash
-pip install code-index-mcp
-```
-
-Then configure:
-
-```json
-{
-  "mcpServers": {
-    "code-index": {
-      "command": "code-index-mcp",
-      "args": []
-    }
-  }
-}
-```
-
-</details>
-
-## Usage Examples
-
-### **Quick Start Workflow**
-
-**1. Initialize Your Project**
-
-Build the initial index and tell the MCP server where the codebase is located.
-
-Ask your coding assistant to:
-
-```
-Set the code-index project path to /Users/dev/my-react-app and generate a log file.
-```
-
-*Automatically indexes your codebase and creates searchable cache while generating an .indexer.log file for you to verify*
-
-- **🚫 `.indexerignore` Support**: Create this file in your project root to exclude files and directories from indexing and search using gitignore-style patterns.
-
-## Find Context Fast
-
-To quickly understand and navigate this project's codebase using an AI code assistant, leverage the `find_symbols` tool for its speed and efficiency in identifying code structures.
-
-This tool returns a dense, token effient representation of how the matching symbols relate to the overall codebase.
-
 **Sample Response**
-```
+
+```text
 [function] get_user(user_id: int)
   -> calls: db.query, logger.info
   <- called_by: get_user_profile, update_user_settings
@@ -188,43 +80,181 @@ This tool returns a dense, token effient representation of how the matching symb
   |> in: src/config.py
 ```
 
+## **Multi-Language Support**
+
+Code Scope MCP supports:
+
+- Python
+- JavaScript
+- TypeScript
+- Java
+- C++
+- C#
+- Go
+- Ruby
+- PHP
+- Swift
+- Rust
+- HTML
+- CSS
+
+**Symbol Extraction**: Capture core symbols including:
+
+- Functions/methods (names, parameters).
+- Classes (definitions, methods).
+- Namespaces.
+- Constants and globals.
+- Imports/exports/includes/requires.
+- Files (treated as searchable symbols).
+- **Relationship Extraction**: Build a graph capturing:
+
+  - Function/method calls (inter-file, inter-class).
+  - Inheritance hierarchies (parent-child).
+  - Import/dependency chains.
+  - Namespace definitions and memberships.
+  - Instantiations/constructor calls.
+  - Overrides/implementations (e.g., interface methods).
+
+## Quick Start
+
+### **Recommended Setup (Most Users)**
+
+Known to work with Claude Code and Cline. May work with others.
+
+**Prerequisites:** Python 3.10+ and [uv](https://github.com/astral-sh/uv)
+
+1. **Add to your MCP configuration** (e.g., `claude_desktop_config.json` or `~/.claude.json`):
+
+   ```json
+   {
+     "mcpServers": {
+       "code-scope": {
+         "command": "uvx",
+         "args": ["code-scope-mcp"]
+       }
+     }
+   }
+   ```
+2. **Restart your application** – `uvx` automatically handles installation and execution
+
+### 🛠️ **Development Setup**
+
+For contributing or local development:
+
+1. **Clone and install:**
+
+   ```bash
+   git clone https://github.com/yourusername/code-scope-mcp.git
+   cd code-scope-mcp
+   uv sync
+   ```
+2. **Configure for local development:**
+
+   ```json
+   {
+     "mcpServers": {
+       "code-scope": {
+         "command": "uv",
+         "args": ["run", "code-scope-mcp"]
+       }
+     }
+   }
+   ```
+3. **Debug with MCP Inspector:**
+
+   ```bash
+   npx @modelcontextprotocol/inspector uv run code-scope-mcp
+   ```
+
+<details>
+<summary><strong>Alternative: Manual pip Installation</strong></summary>
+
+If you prefer traditional pip management:
+
+```bash
+pip install code-scope-mcp
+```
+
+Then configure:
+
+```json
+{
+  "mcpServers": {
+    "code-scope": {
+      "command": "code-scope-mcp",
+      "args": []
+    }
+  }
+}
+```
+
+</details>
+
+## Usage Examples
+
+### **Quick Start Workflow**
+
+**1. Initialize Your Project**
+
+Build the initial index and tell the MCP server where the codebase is located.
+
+Ask your coding assistant to:
+
+```
+Set the code-scope project path to /Users/dev/my-react-app and generate a log file.
+```
+
+*Automatically indexes your codebase and creates searchable cache while generating an .indexer.log file for you to verify*
+
+- **🚫 `.indexerignore` Support**: Create this file in your project root to exclude files and directories from indexing and search using gitignore-style patterns.
+
+## Find Context Fast
+
+To quickly understand and navigate this project's codebase using an AI code assistant, leverage the `find_symbols` tool for its speed and efficiency in identifying code structures.
+
+This tool returns a dense, token efficient representation of how the matching symbols relate to the overall codebase.
+
 ### Example 1: Discovering Core Components
 
-*   **User Request to AI**: "I'm new to this user management system. Can you tell me which are the most important classes in this project?"
-*   **AI Assistant Tool Usage**:
-    ```
-    find_symbols pattern="class*" symbol_type=["class"]
-    ```
-    This provides a quick overview of all class definitions, such as `Person`, `User`, `UserRole`, `UserStatus`, `UserManager`, `AuthService`, etc., helping the user grasp the core building blocks.
+* **User Request to AI**: "I'm new to this user management system. Can you tell me which are the most important classes in this project?"
+* **AI Assistant Tool Usage**:
+  ```
+  find_symbols pattern="class*" symbol_type=["class"]
+  ```
+
+  This provides a quick overview of all class definitions, such as `Person`, `User`, `UserRole`, `UserStatus`, `UserManager`, `AuthService`, etc., helping the user grasp the core building blocks.
 
 ### Example 2: Locating Specific Functionality
 
-*   **User Request to AI**: "I need to find where user creation logic is implemented. Look for functions related to creating users."
-*   **AI Assistant Tool Usage**:
-    ```
-    find_symbols pattern="create*" symbol_type=["function"]
-    ```
-    This would pinpoint functions like `create_user` within `user_manager.py`, allowing the user to quickly locate the relevant code for user creation.
+* **User Request to AI**: "I need to find where user creation logic is implemented. Look for functions related to creating users."
+* **AI Assistant Tool Usage**:
+  ```
+  find_symbols pattern="create*" symbol_type=["function"]
+  ```
+
+  This would pinpoint functions like `create_user` within `user_manager.py`, allowing the user to quickly locate the relevant code for user creation.
 
 **Example 3: Exploring File-Specific Logic
 
-*   **User Request to AI**: "Show me all the functions defined in the `auth_service.py` file to understand the authentication mechanisms."
-*   **AI Assistant  Tool Usage**:
-    ```bash
-    find_symbols pattern="*" path_pattern="**/auth_service.py" symbol_type=["function"]
-    ```
-    This narrows down the search to functions within a specific file, revealing authentication-related functions like `authenticate`, `login`, `logout`, `create_session`, etc.
+* **User Request to AI**: "Show me all the functions defined in the `auth_service.py` file to understand the authentication mechanisms."
+* **AI Assistant  Tool Usage**:
+  ```bash
+  find_symbols pattern="*" path_pattern="**/auth_service.py" symbol_type=["function"]
+  ```
+
+  This narrows down the search to functions within a specific file, revealing authentication-related functions like `authenticate`, `login`, `logout`, `create_session`, etc.
 
 ### Example 4: Identifying Method Definitions within a Class
 
-*   **User Request to AI**: "I'm looking at the `User` class. What methods are defined within it, particularly around password management?"
-*   **AI Assistant Action**:
-    ```bash
-    find_symbols pattern="User.*" symbol_type=["method"] # Assuming 'method' is a discoverable type or part of a class name
-    # Or, if methods are listed under classes:
-    find_symbols pattern="set_password|check_password" symbol_type=["function"]
-    ```
-    This helps in discovering methods like `set_password`, `check_password`, etc., directly associated with the `User` class or its functionality.
+* **User Request to AI**: "I'm looking at the `User` class. What methods are defined within it, particularly around password management?"
+* **AI Assistant Action**:
+  ```bash
+  find_symbols pattern="User.*" symbol_type=["method"] # Assuming 'method' is a discoverable type or part of a class name
+  # Or, if methods are listed under classes:
+  find_symbols pattern="set_password|check_password" symbol_type=["function"]
+  ```
+
+  This helps in discovering methods like `set_password`, `check_password`, etc., directly associated with the `User` class or its functionality.
 
 By using these `find_symbols` commands, an AI assistant can efficiently guide a user through the codebase, helping them quickly locate relevant classes, functions, and methods based on their specific queries.
 
@@ -312,21 +342,32 @@ If automatic index updates aren't working when files change, try:
 ### **Building from Source**
 
 ```bash
-git clone https://github.com/johnhuang316/code-index-mcp.git
-cd code-index-mcp
+git clone https://github.com/yourusername/code-scope-mcp.git
+cd code-scope-mcp
 uv sync
-uv run code-index-mcp
+uv run code-scope-mcp
 ```
 
 ### **Debugging**
 
 ```bash
-npx @modelcontextprotocol/inspector uvx code-index-mcp
+npx @modelcontextprotocol/inspector uvx code-scope-mcp
 ```
 
 ### **Contributing**
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome!
+
+Please open an issue with "Proposal:" in the title to discuss what you would like to contribute. Pre-planning is important because volunteer developer time is precious and we should not waste it.
+
+### Similar Projects
+
+* https://glean.software/docs/introduction/ (for humans, not an MCP)
+* https://github.com/johnhuang316/code-index-mcp
+
+### **Credit & Acknowledgement**
+
+This MCP was originally forked from https://github.com/johnhuang316/code-index-mcp. Both this and the original repo have diverged wildly with completely different architectures. However, the original author provided inspiration and a starting point for this project. Thank you.
 
 ---
 
