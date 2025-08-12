@@ -31,11 +31,40 @@ class GraphBuilder:
         for result in analysis_results:
             file_id = self._get_or_create_file_symbol(cursor, result.file_info)
 
-            # Create symbols for classes first, so they are available for method qnames
+            # Create symbols for classes and their relationships
             for a_class in result.classes:
-                self._get_or_create_symbol(cursor, file_id, a_class, "class")
+                class_id = self._get_or_create_symbol(
+                    cursor, file_id, a_class, "class"
+                )
 
-            # Create symbols for functions, determining qname based on class scope
+                # Create relationships for methods
+                for method in a_class.methods:
+                    method_id = self._get_or_create_symbol(
+                        cursor, file_id, method, "function"
+                    )
+                    self._create_relationship(
+                        cursor, class_id, method_id, "contains_method"
+                    )
+                    for call in method.calls:
+                        target_ids = self._find_symbol(cursor, call)
+                        if target_ids:
+                            confidence = 1.0 / len(target_ids)
+                            for target_id in target_ids:
+                                self._create_relationship(
+                                    cursor, method_id, target_id, "calls", confidence
+                                )
+
+                # Create relationships for inheritance
+                for parent_class_name in a_class.inherits_from:
+                    parent_ids = self._find_symbol(cursor, parent_class_name)
+                    if parent_ids:
+                        confidence = 1.0 / len(parent_ids)
+                        for parent_id in parent_ids:
+                            self._create_relationship(
+                                cursor, class_id, parent_id, "inherits", confidence
+                            )
+
+            # Create symbols for standalone functions
             for function in result.functions:
                 source_id = self._get_or_create_symbol(
                     cursor, file_id, function, "function"
@@ -77,12 +106,13 @@ class GraphBuilder:
         symbol_type: str,
     ) -> int:
         qname = symbol_info.qname
+        name = symbol_info.name
 
         if (file_id, qname) in self.symbol_cache:
             return self.symbol_cache[(file_id, qname)]
 
         cursor.execute(
-            "SELECT id FROM code_symbols WHERE file_id = ? AND name = ?", (file_id, qname)
+            "SELECT id FROM code_symbols WHERE file_id = ? AND qname = ?", (file_id, qname)
         )
         row = cursor.fetchone()
         if row:
@@ -97,11 +127,12 @@ class GraphBuilder:
 
         cursor.execute(
             """
-            INSERT INTO code_symbols (file_id, name, type_id, line_start, line_end)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO code_symbols (file_id, name, qname, type_id, line_start, line_end)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
                 file_id,
+                name,
                 qname,
                 type_id,
                 symbol_info.line_start,
@@ -114,7 +145,11 @@ class GraphBuilder:
 
     def _find_symbol(self, cursor, symbol_name: str) -> List[int]:
         # This is a simplification. It will be improved to handle qnames and ambiguity.
-        cursor.execute("SELECT id FROM code_symbols WHERE name LIKE ?", (f"%:{symbol_name}",))
+        # If symbol name contains a separator, it's likely a qualified name.
+        if "." in symbol_name or "\\" in symbol_name or "::" in symbol_name:
+            cursor.execute("SELECT id FROM code_symbols WHERE qname LIKE ?", (f"%{symbol_name}",))
+        else:
+            cursor.execute("SELECT id FROM code_symbols WHERE name = ?", (symbol_name,))
         rows = cursor.fetchall()
         return [row[0] for row in rows]
 

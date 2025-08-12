@@ -25,6 +25,9 @@ class SearchService(BaseService):
     - Search strategy selection and optimization
     - Search capabilities reporting
     """
+    def __init__(self, ctx: "ContextHelper", db_service: Optional[DatabaseService] = None):
+        super().__init__(ctx)
+        self._db_service = db_service
 
     
     def search_code(  # pylint: disable=too-many-arguments
@@ -182,8 +185,13 @@ class SearchService(BaseService):
         if include_context is None:
             include_context = ['all']
 
-        db_service = DatabaseService(self.settings.get_db_path())
-        db_service.connect()
+        db_service = self._db_service
+        close_db_at_end = False
+        if not db_service:
+            db_service = DatabaseService(self.settings.get_db_path())
+            db_service.connect()
+            close_db_at_end = True
+        
         conn = db_service.get_connection()
 
         output_lines = []
@@ -339,51 +347,41 @@ class SearchService(BaseService):
                         rel_groups = {}
                         for rel in relationships_map['outgoing'][symbol_id]:
                             rel_type = rel['type']
-                            if rel_type == 'contains_method':
-                                rel_type = 'contains'
-                            
                             if rel_type not in rel_groups:
-                                rel_groups[rel_type] = {}
-                            
-                            target_type = rel['target_type']
-                            if target_type not in rel_groups[rel_type]:
-                                rel_groups[rel_type][target_type] = []
+                                rel_groups[rel_type] = []
                             
                             confidence_marker = " ?" if rel.get('confidence', 1.0) < 0.5 else ""
-                            rel_groups[rel_type][target_type].append(f"{rel['target_name']}{confidence_marker}")
+                            rel_groups[rel_type].append(f"{rel['target_name']}{confidence_marker}")
 
-                        for rel_type, type_groups in rel_groups.items():
-                            output_lines.append(f"  -> {rel_type}:")
-                            for target_type, targets in type_groups.items():
-                                output_lines.append(f"    - {target_type}: {', '.join(targets)}")
+                        for rel_type, targets in rel_groups.items():
+                            output_lines.append(f"  -> {rel_type}: {', '.join(targets)}")
 
                     if symbol_id in relationships_map['incoming']:
                         rel_groups = {}
                         for rel in relationships_map['incoming'][symbol_id]:
                             rel_type = rel['type']
-                            if rel_type == 'contains_method':
-                                rel_type = 'contained_by'
+                            
+                            display_rel_type = rel_type
+                            if rel_type == 'calls':
+                                display_rel_type = 'called_by'
+                            elif rel_type in ['inherits', 'contains_method']:
+                                continue
 
-                            if rel_type not in rel_groups:
-                                rel_groups[rel_type] = {}
-
-                            source_type = rel['source_type']
-                            if source_type not in rel_groups[rel_type]:
-                                rel_groups[rel_type][source_type] = []
+                            if display_rel_type not in rel_groups:
+                                rel_groups[display_rel_type] = []
 
                             confidence_marker = " ?" if rel.get('confidence', 1.0) < 0.5 else ""
-                            rel_groups[rel_type][source_type].append(f"{rel['source_name']}{confidence_marker}")
+                            rel_groups[display_rel_type].append(f"{rel['source_name']}{confidence_marker}")
 
-                        for rel_type, type_groups in rel_groups.items():
-                            output_lines.append(f"  <- {rel_type}:")
-                            for source_type, sources in type_groups.items():
-                                output_lines.append(f"    - {source_type}: {', '.join(sources)}")
+                        for rel_type, sources in rel_groups.items():
+                            output_lines.append(f"  <- {rel_type}: {', '.join(sources)}")
                 
                 output_lines.append("") # Add a blank line for readability
 
         except sqlite3.Error as e:
             output_lines.append(f"Database error: {e}")
         finally:
-            db_service.close()
+            if close_db_at_end:
+                db_service.close()
 
         return "\n".join(output_lines).strip()

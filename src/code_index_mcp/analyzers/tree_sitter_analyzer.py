@@ -1,3 +1,4 @@
+import os
 from tree_sitter import Language, Parser, Node
 from tree_sitter_languages import get_language, get_parser
 from .base_analyzer import BaseAnalyzer
@@ -24,7 +25,14 @@ LANGUAGE_QUERIES = {
         """,
         "classes": "(class_definition) @class",
         "functions": "(function_definition) @function",
-        "calls": "(call) @call",
+        "calls": """
+            (call
+                function: (identifier) @call
+            )
+            (call
+                function: (attribute attribute: (identifier) @call)
+            )
+        """,
     },
     "typescript": {
         "imports": "(import_statement) @import",
@@ -191,7 +199,7 @@ class TreeSitterAnalyzer(BaseAnalyzer):
             return separator.join(path_parts)
         else:
             # Fallback to file-based qname if no enclosing scope is found
-            return f"{self.file_path}:{name}"
+            return f"{os.path.basename(self.file_path)}:{name}"
 
     def _extract_function_info(self, node: Node, tree) -> FunctionInfo:
         name = self._extract_name(node)
@@ -274,10 +282,10 @@ class TreeSitterAnalyzer(BaseAnalyzer):
             line_start=node.start_point[0] + 1,
             line_end=node.end_point[0] + 1,
             line_count=node.end_point[0] - node.start_point[0] + 1,
-            inherits_from=", ".join(parent_classes) if parent_classes else None,
+            inherits_from=parent_classes,
         )
 
-    def _extract_import_info(self, node: Node, tree) -> ImportInfo:
+    def _extract_import_info(self, node: Node) -> ImportInfo:
         if self.language_name in ['javascript', 'typescript']:
             source_node = node.child_by_field_name("source")
             module = self._get_node_text(source_node) if source_node else "unknown"
@@ -345,8 +353,4 @@ class TreeSitterAnalyzer(BaseAnalyzer):
         return None
 
     def _extract_call_info(self, node: Node) -> str:
-        function_node = node.child_by_field_name("function")
-        if not function_node:
-             # Python calls have a different structure
-             function_node = node.child(0)
-        return self._get_node_text(function_node)
+        return self._get_node_text(node)

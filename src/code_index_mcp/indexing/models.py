@@ -32,6 +32,7 @@ class FunctionInfo:
     line_end: int
     line_count: int
     calls: List[str] = field(default_factory=list)
+    instantiations: List[str] = field(default_factory=list)
     called_by: List[str] = field(default_factory=list)
     is_async: bool = False
     decorators: List[str] = field(default_factory=list)
@@ -46,7 +47,7 @@ class ClassInfo:
     line_end: int
     line_count: int
     methods: List[FunctionInfo]
-    inherits_from: Optional[str] = None
+    inherits_from: List[str] = field(default_factory=list)
     instantiated_by: List[str] = field(default_factory=list)
 
 
