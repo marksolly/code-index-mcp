@@ -136,6 +136,16 @@ class DatabaseService:
             "CREATE INDEX IF NOT EXISTS idx_code_symbols_file_id ON code_symbols(file_id);",
             "CREATE INDEX IF NOT EXISTS idx_relationships_source ON relationships(source_symbol_id);",
             "CREATE INDEX IF NOT EXISTS idx_relationships_target ON relationships(target_symbol_id);",
+            """
+            CREATE TABLE IF NOT EXISTS unresolved_relationships (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_symbol_id INTEGER NOT NULL,
+                target_name TEXT NOT NULL,
+                target_qname TEXT,
+                relationship_type_id INTEGER NOT NULL,
+                FOREIGN KEY (source_symbol_id) REFERENCES code_symbols (id) ON DELETE CASCADE
+            );
+            """,
         ]
 
         for statement in ddl_statements:
@@ -143,13 +153,16 @@ class DatabaseService:
 
         # Pre-populate lookup tables
         symbol_types = ['file', 'function', 'class', 'constant', 'import', 'global', 'variable', 'export', 'namespace']
-        relationship_types = ['calls', 'imports', 'inherits', 'instantiates', 'contains_method', 'references_variable', 'overrides', 'exports_to', 'defines_namespace']
+        relationship_types = ['calls', 'imports', 'inherits', 'instantiates', 'contains_method', 'references_variable', 'overrides', 'defines_namespace']
 
         for s_type in symbol_types:
             cursor.execute("INSERT OR IGNORE INTO symbol_types (name) VALUES (?)", (s_type,))
 
         for r_type in relationship_types:
             cursor.execute("INSERT OR IGNORE INTO relationship_types (name) VALUES (?)", (r_type,))
+
+        # Clear unresolved relationships from previous runs
+        cursor.execute("DELETE FROM unresolved_relationships;")
 
         self.conn.commit()
         cursor.close()

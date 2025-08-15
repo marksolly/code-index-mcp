@@ -5,6 +5,10 @@ class Engine {
         this.type = type;
     }
 
+    get_identifier(){
+        return `4AGE`; //Engine model
+    }
+
     start_engine() {
         return `Engine (${this.type}) is starting.`;
     }
@@ -16,10 +20,15 @@ export class Car extends Vehicle {
         this.engine = new Engine(engine_type);
     }
 
+    get_identifier(){
+        return `BQM532`; //Licence plate
+    }
+
     drive() {
         const start_message = this.start();
         const engine_message = this.engine.start_engine();
         const helper_message = helper_function();
-        return `${start_message} | ${engine_message} | Using helper: ${helper_message} | Constant: ${MY_CONSTANT}`;
+        const licence_plate = this.get_identifier();
+        return `${start_message} | ${engine_message} | ${licence_plate} | Using helper: ${helper_message} | Constant: ${MY_CONSTANT}`;
     }
 }

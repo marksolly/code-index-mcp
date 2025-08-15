@@ -2,21 +2,38 @@ import os
 from tree_sitter import Language, Parser, Node
 from tree_sitter_languages import get_language, get_parser
 from .base_analyzer import BaseAnalyzer
-from ..indexing.models import FunctionInfo, ClassInfo, ImportInfo
+from ..indexing.models import FunctionInfo, ClassInfo, ImportInfo, CallInfo, PropertyInfo, VariableInfo, DebugOptions
+import re
 from typing import List, Dict, Any, Optional
+
+def _debug_symbol(debug_options: DebugOptions, symbol_name: str, language_name: str, node: Node, message: str):
+    if (debug_options and
+        debug_options.symbol_names and
+        any(s in symbol_name for s in debug_options.symbol_names)):
+        print(f"DEBUG: [{language_name}] {symbol_name} -> {message}")
+        print(f"  Node: {node.type} at {node.start_point}-{node.end_point}")
+        print(f"  Text: {node.text.decode('utf-8')[:100]}")
+
 
 # Language-specific queries for symbol extraction
 LANGUAGE_QUERIES = {
     "javascript": {
         "imports": "(import_statement) @import",
-        "classes": "(class_declaration) @class",
+        "classes": """
+            (class_declaration) @class
+            (export_statement (class_declaration) @class)
+        """,
         "functions": """
             (function_declaration) @function
             (arrow_function) @function
             (method_definition) @function
         """,
         "methods": "(method_definition) @method",
-        "calls": "(call_expression) @call",
+        "calls": """
+            (call_expression) @call
+            (new_expression) @call
+        """,
+        "assignments": "(assignment_expression) @assignment",
     },
     "python": {
         "imports": """
@@ -25,25 +42,31 @@ LANGUAGE_QUERIES = {
         """,
         "classes": "(class_definition) @class",
         "functions": "(function_definition) @function",
-        "calls": """
-            (call
-                function: (identifier) @call
-            )
-            (call
-                function: (attribute attribute: (identifier) @call)
+        "calls": "(call) @call",
+        "assignments": "(assignment) @assignment",
+        "variable_references": """
+            (
+                [((identifier) @constant_read)]
+                (#match? @constant_read "^[A-Z_][A-Z0-9_]*$")
             )
         """,
     },
     "typescript": {
         "imports": "(import_statement) @import",
-        "classes": "(class_declaration) @class",
+        "classes": """
+            (class_declaration) @class
+            (export_statement (class_declaration) @class)
+        """,
         "functions": """
             (function_declaration) @function
             (arrow_function) @function
             (method_definition) @function
         """,
         "methods": "(method_definition) @method",
-        "calls": "(call_expression) @call",
+        "calls": """
+            (call_expression) @call
+            (new_expression) @call
+        """,
     },
     "php": {
         "imports": "(namespace_use_clause) @import",
@@ -73,12 +96,18 @@ LANGUAGE_QUERIES = {
 
 
 class TreeSitterAnalyzer(BaseAnalyzer):
-    def __init__(self, language_name: str):
+    def __init__(self, language_name: str, debug_options: Optional[DebugOptions] = None):
         self.language_name = language_name
         self.language = get_language(language_name)
         self.parser = get_parser(language_name)
         self.queries = LANGUAGE_QUERIES.get(language_name, {})
         self.file_path = ""
+        self.debug_options = debug_options or DebugOptions()
+        if self.debug_options.language and self.debug_options.language != self.language_name:
+            self.debug_options = DebugOptions() # Reset if language doesn't match
+        
+        if self.debug_options.symbol_names and self.debug_options.language:
+            print(f"DEBUG: TreeSitterAnalyzer for {language_name} initialized with debug symbols: '{self.debug_options.symbol_names}' and language: '{self.debug_options.language}'")
 
     def analyze_file(self, file_path: str) -> Dict[str, Any]:
         self.file_path = file_path
@@ -95,22 +124,27 @@ class TreeSitterAnalyzer(BaseAnalyzer):
         func_nodes = self._execute_query(tree, "functions", lambda node: node)
 
         for c_node in class_nodes:
+            class_info = self._extract_class_info(c_node, [], tree)
             methods = []
             for f_node in func_nodes:
                 if self._is_method(f_node, c_node):
-                    methods.append(self._extract_function_info(f_node, tree))
+                    methods.append(self._extract_function_info(f_node, tree, class_name=class_info.name, imports=imports))
             
-            all_classes.append(self._extract_class_info(c_node, methods))
+            class_info.methods = methods
+            all_classes.append(class_info)
 
         # Extract top-level functions
         for f_node in func_nodes:
             if not self._is_method_of_any_class(f_node, class_nodes):
-                all_funcs.append(self._extract_function_info(f_node, tree))
+                all_funcs.append(self._extract_function_info(f_node, tree, imports=imports))
+
+        all_vars = self._execute_query(tree, "assignments", self._extract_variable_info)
 
         return {
             "functions": all_funcs,
             "classes": all_classes,
             "imports": imports,
+            "variables": all_vars,
             "language_specific": {},
         }
 
@@ -131,7 +165,8 @@ class TreeSitterAnalyzer(BaseAnalyzer):
 
         try:
             query = self.language.query(query_str)
-            captures = query.captures(tree.root_node)
+            root_node = kwargs.get('root_node', tree.root_node)
+            captures = query.captures(root_node)
             
             nodes_seen = set()
             for node, _ in captures:
@@ -162,9 +197,27 @@ class TreeSitterAnalyzer(BaseAnalyzer):
 
         return "anonymous"
 
-    def _extract_qname(self, node: Node, name: str) -> str:
+    def _extract_qname(self, node: Node, name: str, imports: Optional[List[ImportInfo]] = None) -> str:
         """Extracts the qualified name for a symbol by traversing up the AST."""
         
+        # Check if the name is an imported symbol
+        if imports:
+            for imp in imports:
+                if name in imp.imported_names:
+                    if imp.import_type == 'from':
+                        if imp.module.startswith('.'):
+                            # For 'from .module import name', resolve to module_name.py:name
+                            resolved_module_name = imp.module.lstrip('.') + ".py"
+                            return f"{resolved_module_name}:{name}"
+                        else:
+                            # For 'from module import name', use module:name
+                            return f"{imp.module}:{name}"
+                    elif imp.import_type == 'import':
+                        # For 'import module', if 'name' is the module itself, or an alias
+                        # This case is less common for direct variable references like constants
+                        # but if it happens, we'll use module:name
+                        return f"{imp.module}:{name}"
+
         path_parts = [name]
         
         # Define scope types that contribute to the qname
@@ -201,9 +254,13 @@ class TreeSitterAnalyzer(BaseAnalyzer):
             # Fallback to file-based qname if no enclosing scope is found
             return f"{os.path.basename(self.file_path)}:{name}"
 
-    def _extract_function_info(self, node: Node, tree) -> FunctionInfo:
+    def _extract_function_info(self, node: Node, tree, class_name: Optional[str] = None, variable_definitions_map: Optional[Dict[str, VariableInfo]] = None, imports: Optional[List[ImportInfo]] = None) -> FunctionInfo:
         name = self._extract_name(node)
-        qname = self._extract_qname(node, name)
+        qname = self._extract_qname(node, name, imports=imports)
+
+        _debug_symbol(self.debug_options, name, self.language_name, node, f"Extracting function info (class context: {class_name})")
+        if class_name:
+            _debug_symbol(self.debug_options, class_name, self.language_name, node, f"Extracting method '{name}' for class '{class_name}'")
         
         params_node = node.child_by_field_name("parameters")
         parameters = self._get_node_text(params_node).strip("()").split(",") if params_node else []
@@ -211,11 +268,28 @@ class TreeSitterAnalyzer(BaseAnalyzer):
 
         body_node = node.child_by_field_name("body")
         calls = []
+        variable_references = []
         if body_node:
             call_nodes = self._execute_query(tree, "calls", lambda n, **kw: n, root_node=body_node)
             for call_node in call_nodes:
-                if body_node.start_byte <= call_node.start_byte and body_node.end_byte >= call_node.end_byte:
-                    calls.append(self._extract_call_info(call_node))
+                call_info = self._extract_call_info(call_node, class_name)
+                if call_info:
+                    calls.append(call_info)
+
+            if self.language_name == 'python':
+                identifier_nodes = self._execute_query(tree, "variable_references", lambda n, **kw: n, root_node=body_node)
+                for id_node in identifier_nodes:
+                    id_text = self._get_node_text(id_node)
+                    _debug_symbol(self.debug_options, id_text, self.language_name, id_node, f"Captured variable reference: {id_text} (Node Type: {id_node.type})")
+                    # Create a VariableInfo object for the reference
+                    var_ref_info = VariableInfo(
+                        name=id_text,
+                        qname=self._extract_qname(id_node, id_text, imports=imports), # Pass imports to _extract_qname
+                        line_start=id_node.start_point[0] + 1,
+                        line_end=id_node.end_point[0] + 1,
+                        line_count=id_node.end_point[0] - id_node.start_point[0] + 1,
+                    )
+                    variable_references.append(var_ref_info)
 
         return FunctionInfo(
             name=name,
@@ -225,17 +299,103 @@ class TreeSitterAnalyzer(BaseAnalyzer):
             line_end=node.end_point[0] + 1,
             line_count=node.end_point[0] - node.start_point[0] + 1,
             calls=calls,
+            variable_references=variable_references,
         )
 
-    def _extract_class_info(self, node: Node, methods: List[FunctionInfo]) -> ClassInfo:
+    def _extract_variable_info(self, node: Node) -> Optional[VariableInfo]:
+        if self.language_name not in ['python']:
+            return None
+        
+        left_node = node.child_by_field_name('left')
+        if not left_node:
+            return None
+
+        name = self._get_node_text(left_node)
+        
+        # Check if it's a top-level constant definition
+        is_top_level_constant = (
+            node.parent and 
+            (node.parent.type == 'module' or node.parent.type == 'decorated_definition') and
+            re.match(r"^[A-Z_][A-Z0-9_]*$", name)
+        )
+
+        if is_top_level_constant:
+            # For top-level constants, simplify qname to just file_name:name
+            qname = f"{os.path.basename(self.file_path)}:{name}"
+        else:
+            qname = self._extract_qname(node, name)
+
+        _debug_symbol(self.debug_options, name, self.language_name, node, "Extracting variable info")
+
+        return VariableInfo(
+            name=name,
+            qname=qname,
+            line_start=node.start_point[0] + 1,
+            line_end=node.end_point[0] + 1,
+            line_count=node.end_point[0] - node.start_point[0] + 1,
+        )
+
+    def _extract_property_info(self, node: Node) -> Optional[PropertyInfo]:
+        if self.language_name not in ['javascript', 'typescript']:
+            return None
+
+        left_node = node.child_by_field_name('left')
+        right_node = node.child_by_field_name('right')
+
+        if not left_node or not right_node or left_node.type != 'member_expression':
+            return None
+
+        obj_node = left_node.child_by_field_name('object')
+        if not obj_node or self._get_node_text(obj_node) != 'this':
+            return None
+
+        prop_name_node = left_node.child_by_field_name('property')
+        if not prop_name_node:
+            return None
+        
+        prop_name = self._get_node_text(prop_name_node)
+        prop_type = None
+
+        _debug_symbol(self.debug_options, prop_name, self.language_name, node, "Extracting property info")
+
+        if right_node.type == 'new_expression':
+            constructor_node = right_node.child_by_field_name('constructor')
+            if constructor_node:
+                prop_type = self._get_node_text(constructor_node)
+
+        return PropertyInfo(
+            name=prop_name,
+            type_name=prop_type,
+            line_number=node.start_point[0] + 1
+        )
+
+    def _extract_class_info(self, node: Node, methods: List[FunctionInfo], tree) -> ClassInfo:
         name = self._extract_name(node)
         qname = self._extract_qname(node, name)
 
+        _debug_symbol(self.debug_options, name, self.language_name, node, "Extracting class info")
+
+        properties = []
+        if self.language_name in ['javascript', 'typescript']:
+            assignment_nodes = self._execute_query(tree, "assignments", lambda n, **kw: n, root_node=node)
+            for assign_node in assignment_nodes:
+                if node.start_byte <= assign_node.start_byte and node.end_byte >= assign_node.end_byte:
+                    prop_info = self._extract_property_info(assign_node)
+                    if prop_info:
+                        properties.append(prop_info)
+
         parent_classes = []
         if self.language_name == 'javascript':
-            heritage_node = node.child_by_field_name('heritage')
-            if heritage_node:
-                parent_classes.append(self._get_node_text(heritage_node))
+            # For javascript, the heritage is not a named field, but a `class_heritage` node
+            for child in node.children:
+                if child.type == 'class_heritage':
+                    heritage_text = self._get_node_text(child)
+                    parts = heritage_text.split()
+                    if len(parts) > 1:
+                        parent_classes.append(parts[1])
+                    else:
+                        parent_classes.append(heritage_text)
+                    break
         elif self.language_name == 'typescript':
             heritage_node = node.child_by_field_name('heritage')
             if heritage_node:
@@ -279,6 +439,7 @@ class TreeSitterAnalyzer(BaseAnalyzer):
             name=name,
             qname=qname,
             methods=methods,
+            properties=properties,
             line_start=node.start_point[0] + 1,
             line_end=node.end_point[0] + 1,
             line_count=node.end_point[0] - node.start_point[0] + 1,
@@ -352,5 +513,71 @@ class TreeSitterAnalyzer(BaseAnalyzer):
                 )
         return None
 
-    def _extract_call_info(self, node: Node) -> str:
-        return self._get_node_text(node)
+    def _extract_call_info(self, node: Node, class_name: Optional[str]) -> Optional[CallInfo]:
+        if self.language_name == 'python':
+            function_node = node.child_by_field_name('function')
+            if not function_node:
+                return None
+
+            call_name = ""
+            qname = None
+
+            if function_node.type == 'identifier':
+                call_name = self._get_node_text(function_node)
+            elif function_node.type == 'attribute':
+                call_name = self._get_node_text(function_node)
+                object_node = function_node.child_by_field_name('object')
+                attribute_node = function_node.child_by_field_name('attribute')
+                
+                if object_node and attribute_node:
+                    object_name = self._get_node_text(object_node)
+                    
+                    if class_name and object_name == 'self':
+                        call_name = self._get_node_text(attribute_node)
+                        qname = f"{class_name}.{call_name}"
+
+            if call_name:
+                return CallInfo(name=call_name, qname=qname)
+
+        elif self.language_name in ['javascript', 'typescript']:
+            if node.type == 'new_expression':
+                constructor_node = node.child_by_field_name('constructor')
+                if constructor_node:
+                    call_name = self._get_node_text(constructor_node)
+                    return CallInfo(name=call_name, qname=call_name)
+                return None
+
+            # This is a call_expression
+            function_node = node.child_by_field_name('function')
+            if not function_node:
+                return None
+
+            call_name = self._get_node_text(function_node)
+            qname = None
+
+            if function_node.type == 'member_expression':
+                # Handle nested member expressions like `this.engine.start_engine`
+                obj = function_node.child_by_field_name('object')
+                prop = function_node.child_by_field_name('property')
+                
+                if obj and prop:
+                    obj_text = self._get_node_text(obj)
+                    prop_text = self._get_node_text(prop)
+
+                    if class_name and obj_text == 'this':
+                        call_name = prop_text
+                        qname = f"{class_name}.{prop_text}"
+                    elif obj.type == 'member_expression' and self._get_node_text(obj.child_by_field_name('object')) == 'this':
+                        # this.engine.start_engine
+                        inner_prop = obj.child_by_field_name('property')
+                        if inner_prop:
+                            inner_prop_text = self._get_node_text(inner_prop)
+                            call_name = f"{inner_prop_text}.{prop_text}"
+                            # qname is not fully resolved here, but we have the info needed for the resolver
+                    else:
+                        call_name = f"{obj_text}.{prop_text}"
+            
+            return CallInfo(name=call_name, qname=qname)
+
+        return None
+        return None

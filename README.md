@@ -360,6 +360,9 @@ Contributions are welcome!
 
 Please open an issue with "Proposal:" in the title to discuss what you would like to contribute. Pre-planning is important because volunteer developer time is precious and we should not waste it.
 
+**New Languages**
+Please see [NEW_LANG_GUIDE.md](NEW_LANG_GUIDE.md) for details on how to add and run tests for new languages.
+
 ### Similar Projects
 
 * https://glean.software/docs/introduction/ (for humans, not an MCP)

@@ -329,7 +329,30 @@ class SearchService(BaseService):
 
                 output_lines.append(f"[{symbol_type_display}] {symbol_name}")
 
-                if 'all' in include_context or 'location' in include_context:
+                if symbol_type_display == 'file':
+                    contains_query = """
+                        SELECT cs.name, st.name as symbol_type
+                        FROM code_symbols cs
+                        JOIN symbol_types st ON cs.type_id = st.id
+                        WHERE cs.file_id = (SELECT id FROM files WHERE path = ?)
+                          AND cs.id != ?
+                        ORDER BY st.name, cs.name
+                    """
+                    cursor.execute(contains_query, (file_path, symbol_id))
+                    contained_symbols = cursor.fetchall()
+                    if contained_symbols:
+                        contains_groups = {}
+                        for s in contained_symbols:
+                            s_type = s['symbol_type']
+                            if s_type not in contains_groups:
+                                contains_groups[s_type] = []
+                            contains_groups[s_type].append(s['name'])
+                        
+                        output_lines.append("  - Contains:")
+                        for s_type, names in contains_groups.items():
+                            output_lines.append(f"    - {s_type}: {', '.join(names)}")
+
+                if ('all' in include_context or 'location' in include_context) and symbol_type_display != 'file':
                     output_lines.append(f"  |> in: {file_path}" + (f" (lines {line_start}-{line_end})" if line_start and line_end else ""))
 
                 if 'all' in include_context or 'properties' in include_context:
@@ -364,6 +387,8 @@ class SearchService(BaseService):
                             display_rel_type = rel_type
                             if rel_type == 'calls':
                                 display_rel_type = 'called_by'
+                            elif rel_type == 'instantiates':
+                                display_rel_type = 'instantiated_by'
                             elif rel_type in ['inherits', 'contains_method']:
                                 continue
 

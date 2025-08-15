@@ -1,4 +1,5 @@
-MY_CONSTANT = "A_CONSTANT_STRING"
+MY_CONSTANT1 = "A_CONSTANT_STRING"
+MY_CONSTANT2 = "ANOTHER_CONSTANT_STRING"
 
 def helper_function():
     return "I am a helper function"

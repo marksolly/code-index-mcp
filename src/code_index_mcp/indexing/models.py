@@ -12,6 +12,13 @@ import json
 
 
 @dataclass
+class DebugOptions:
+    """Options for debug logging."""
+    symbol_names: Optional[List[str]] = None
+    language: Optional[str] = None
+
+
+@dataclass
 class FileInfo:
     """Basic file information."""
     id: int
@@ -23,6 +30,21 @@ class FileInfo:
 
 
 @dataclass
+class CallInfo:
+    """Information about a function call."""
+    name: str
+    qname: Optional[str] = None
+
+
+@dataclass
+class PropertyInfo:
+    """Information about a class property."""
+    name: str
+    type_name: Optional[str] = None
+    line_number: int = 0
+
+
+@dataclass
 class FunctionInfo:
     """Function definition information."""
     name: str
@@ -31,7 +53,8 @@ class FunctionInfo:
     line_start: int
     line_end: int
     line_count: int
-    calls: List[str] = field(default_factory=list)
+    calls: List[CallInfo] = field(default_factory=list)
+    variable_references: List[str] = field(default_factory=list)
     instantiations: List[str] = field(default_factory=list)
     called_by: List[str] = field(default_factory=list)
     is_async: bool = False
@@ -47,8 +70,19 @@ class ClassInfo:
     line_end: int
     line_count: int
     methods: List[FunctionInfo]
+    properties: List['PropertyInfo'] = field(default_factory=list)
     inherits_from: List[str] = field(default_factory=list)
     instantiated_by: List[str] = field(default_factory=list)
+
+
+@dataclass
+class VariableInfo:
+    """Information about a variable."""
+    name: str
+    qname: str
+    line_start: int
+    line_end: int
+    line_count: int
 
 
 @dataclass
@@ -67,6 +101,7 @@ class FileAnalysisResult:
     functions: List[FunctionInfo]
     classes: List[ClassInfo]
     imports: List[ImportInfo]
+    variables: List[VariableInfo]
     language_specific: Dict[str, Any]
     analysis_errors: List[str] = field(default_factory=list)
 
