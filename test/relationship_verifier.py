@@ -1,6 +1,5 @@
 import sqlite3
-from src.code_index_mcp.services.database import DatabaseService
-
+from src.code_index_mcp.db.database import DatabaseService
 class RelationshipVerifier:
     def __init__(self, db_service: DatabaseService):
         self.db_service = db_service
@@ -22,6 +21,15 @@ class RelationshipVerifier:
         cursor.execute(query, tuple(params))
         result = cursor.fetchone()
         if result is None:
+            # Debugging: Print available symbols if not found
+            print(f"\nDEBUG: Symbol '{name}' (qname: '{qname}') not found. Available symbols with that name:")
+            cursor.execute("SELECT name, qname FROM code_symbols WHERE name = ?", (name,))
+            all_symbols = cursor.fetchall()
+            if not all_symbols:
+                print("  -> No symbols with that name found in the database.")
+            else:
+                for row in all_symbols:
+                    print(f"  -> Found: name='{row['name']}', qname='{row['qname']}'")
             raise AssertionError(f"Symbol '{name}' with qname='{qname}' not found for language '{language}'")
         return result[0]
 
@@ -101,7 +109,7 @@ class RelationshipVerifier:
         """, (symbol_id,))
         incoming = cursor.fetchall()
 
-        dump = f"\n--- Relationships for {role} symbol '{name}' (id: {symbol_id}) ---\n"
+        dump = f"\n--- Relationships found for {role} symbol '{name}' (id: {symbol_id}) ---\n"
         if outgoing:
             dump += "  Outgoing:\n"
             for row in outgoing:

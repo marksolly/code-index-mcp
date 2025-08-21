@@ -14,8 +14,7 @@ import unittest
 import os
 import shutil
 import tempfile
-from src.code_index_mcp.services.database import DatabaseService
-from src.code_index_mcp.indexing.builder import IndexBuilder
+from src.code_index_mcp.db.database import DatabaseServicefrom src.code_index_mcp.indexing.builder import IndexBuilder
 
 class TestTwoPassIndexing(unittest.TestCase):
 

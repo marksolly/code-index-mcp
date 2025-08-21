@@ -19,16 +19,23 @@ import inspect
 import sys
 import argparse
 import time
+import re
 
 # Add project root to the Python path to allow running from any directory
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from src.code_index_mcp.services.database import DatabaseService
-from src.code_index_mcp.indexing.builder import IndexBuilder, DebugOptions
+from src.code_index_mcp.db.database import DatabaseService
+from src.code_index_mcp.indexing.orchestrator import IndexingOrchestrator
+from src.code_index_mcp.indexing.indexing_logger import IndexingLogger
 from test.relationship_verifier import RelationshipVerifier
 from test.lang_definitions.base_test_definition import BaseTestDefinition
+
+class DebugOptions:
+    def __init__(self):
+        self.symbol_names = None
+        self.language = None
 
 class TestLanguageSupportSuite(unittest.TestCase):
     language_to_test = None
@@ -51,15 +58,42 @@ class TestLanguageSupportSuite(unittest.TestCase):
     def rebuild_index(cls):
         if cls.db_service:
             cls.db_service.close()
-        
-        cls.db_service = DatabaseService(db_path=":memory:")
+
+        db_path = os.path.join(project_root, 'test_code_index.db')
+        cls.db_service = DatabaseService(db_path)
+        cls.db_service.delete_db()
         cls.db_service.initialize_db()
+
+        logger = IndexingLogger(enabled=False)
+        if cls.debug_options.symbol_names and cls.debug_options.language:
+            logger = IndexingLogger(
+                enabled=True,
+                filters={
+                    'language': [cls.debug_options.language],
+                    'symbol_names': cls.debug_options.symbol_names
+                }
+            )
+
+        orchestrator = IndexingOrchestrator(project_root, cls.db_service.get_connection(), logger)
+
+        files_to_index = []
+        language_to_test = cls.language_to_test
+        definitions_path = os.path.join(os.path.dirname(__file__), 'lang_definitions')
+        for filename in os.listdir(definitions_path):
+            if filename.endswith('.py') and not filename.startswith('__') and not filename.startswith('base_'):
+                module_name = f"test.lang_definitions.{filename[:-3]}"
+                module = importlib.import_module(module_name)
+                for name, obj in inspect.getmembers(module):
+                    if inspect.isclass(obj) and issubclass(obj, BaseTestDefinition) and obj is not BaseTestDefinition:
+                        definition = obj()
+                        if language_to_test and definition.language_name != language_to_test:
+                            continue
+                        for file_path, lang, code in definition.get_files_to_index():
+                            files_to_index.append((file_path, lang, code))
+
+        orchestrator.process_files(files_to_index)
+        
         cls.verifier = RelationshipVerifier(cls.db_service)
-        
-        index_builder = IndexBuilder(cls.db_service, debug_options=cls.debug_options)
-        
-        test_data_path = os.path.join(os.path.dirname(__file__), 'small-samples')
-        index_builder.build_index(test_data_path)
 
 
 class AutoDebugTestResult(unittest.TextTestResult):
@@ -70,31 +104,16 @@ class AutoDebugTestResult(unittest.TextTestResult):
         if not (TestLanguageSupportSuite.auto_debug and self.failfast):
             return
 
-        test_method_name = test.id().split('.')[-1]
         symbols_to_debug = []
-
-        # Primary method: inspect the 'rel' object from the test method's defaults.
-        if '_custom_' not in test_method_name:
-            test_method = getattr(test, test_method_name, None)
-            if test_method and getattr(test_method, '__defaults__', None):
-                rel = test_method.__defaults__[0]
-                if isinstance(rel, dict):
-                    if 'source' in rel:
-                        symbols_to_debug.append(rel['source'])
-                    if 'target' in rel:
-                        symbols_to_debug.append(rel['target'])
-
-        # Fallback method: string splitting on the test name.
-        if not symbols_to_debug and '_to_' in test_method_name:
-            parts = test_method_name.split('_to_')
-            symbols_to_debug.append(parts[0].split('_')[-1])
-            symbols_to_debug.append(parts[1])
+        if hasattr(test, 'relationship_data'):
+            rel = test.relationship_data
+            symbols_to_debug.extend([rel['source'], rel['target']])
 
         if symbols_to_debug:
-            lang_name = test.language_name if hasattr(test, 'language_name') else 'unknown'
+            lang_name = test.language_name
             debug_symbols_str = ", ".join(symbols_to_debug)
             print(f"\n--- Auto-debugging failed test: {test.id()} ---")
-            print(f"--- Re-running indexer with --debug-symbols=[{debug_symbols_str}] for language {lang_name} ---\n")
+            print(f"--- Re-running indexer with logging on symbols=[{debug_symbols_str}] for language {lang_name} ---\n")
             
             TestLanguageSupportSuite.debug_options.symbol_names = symbols_to_debug
             TestLanguageSupportSuite.debug_options.language = lang_name
@@ -142,6 +161,7 @@ def load_tests(loader, tests, pattern):
                         if rel['type'] in definition_instance.supported_relationships:
                             def test_method(self, rel=rel, lang=definition_instance.language_name):
                                 self.language_name = lang
+                                self.relationship_data = rel
                                 # First, verify both symbols exist
                                 self.verifier.assert_symbol_exists(rel['source'], lang, rel.get('source_qname'))
                                 self.verifier.assert_symbol_exists(rel['target'], lang, rel.get('target_qname'))

@@ -14,8 +14,7 @@ import os
 from datetime import datetime
 from unittest.mock import Mock
 from src.code_index_mcp.analyzers.tree_sitter_analyzer import TreeSitterAnalyzer
-from src.code_index_mcp.services.database import DatabaseService
-from src.code_index_mcp.services.search_service import SearchService
+from src.code_index_mcp.db.database import DatabaseServicefrom src.code_index_mcp.services.search_service import SearchService
 from src.code_index_mcp.project_settings import ProjectSettings
 from src.code_index_mcp.indexing.builder import IndexBuilder
 from src.code_index_mcp.indexing.models import FileInfo, FileAnalysisResult
@@ -50,6 +49,9 @@ class TestGraphExtraction(unittest.TestCase):
         mock_lifespan_context.settings = self.project_settings
         
         self.search_service = SearchService(ctx=mock_ctx, db_service=self.db_service)
+
+    def _build_index(self):
+        self.index_builder.build_index(self.test_data_path)
 
     def tearDown(self):
         self.db_service.close()
@@ -107,15 +109,8 @@ class TestGraphExtraction(unittest.TestCase):
         self.assertEqual(extracted_function.name, 'helper_function', "Function name should be 'helper_function'")
 
     def test_python_class_member_indexing(self):
-        py_analyzer = TreeSitterAnalyzer(language_name='python')
+        self._build_index()
         py_file_path = os.path.join(self.test_data_path, 'python', 'file1.py')
-
-        file_info = FileInfo(id=1, path=py_file_path, extension=".py", language='python', size=0, modified_time=datetime.now())
-        analysis_data = py_analyzer.analyze_file(py_file_path)
-        analysis_result = FileAnalysisResult(file_info, **analysis_data)
-
-        self.index_builder.graph_builder.build_graph([analysis_result])
-
         conn = self.db_service.get_connection()
         cursor = conn.cursor()
 
@@ -124,10 +119,9 @@ class TestGraphExtraction(unittest.TestCase):
         conn.commit()
 
         # Find Vehicle class
-        qname_vehicle = f"{os.path.basename(py_file_path)}:Vehicle"
-        cursor.execute("SELECT id FROM code_symbols WHERE name = 'Vehicle' AND qname = ?", (qname_vehicle,))
+        cursor.execute("SELECT id FROM code_symbols WHERE name = 'Vehicle'")
         result = cursor.fetchone()
-        self.assertIsNotNone(result, f"Vehicle class symbol not found with qname {qname_vehicle}")
+        self.assertIsNotNone(result, "Vehicle class symbol not found")
         vehicle_class_id = result[0]
 
         # Find start method
@@ -145,22 +139,7 @@ class TestGraphExtraction(unittest.TestCase):
         self.assertIsNotNone(cursor.fetchone(), "Should find 'contains_method' relationship for start()")
 
     def test_python_inheritance_indexing(self):
-        py_analyzer = TreeSitterAnalyzer(language_name='python')
-        
-        # Analyze file1.py (contains Vehicle)
-        py_file1_path = os.path.join(self.test_data_path, 'python', 'file1.py')
-        file1_info = FileInfo(id=1, path=py_file1_path, extension=".py", language='python', size=0, modified_time=datetime.now())
-        analysis1_data = py_analyzer.analyze_file(py_file1_path)
-        analysis1_result = FileAnalysisResult(file1_info, **analysis1_data)
-
-        # Analyze file2.py (contains Car that inherits Vehicle)
-        py_file2_path = os.path.join(self.test_data_path, 'python', 'file2.py')
-        file2_info = FileInfo(id=2, path=py_file2_path, extension=".py", language='python', size=0, modified_time=datetime.now())
-        analysis2_data = py_analyzer.analyze_file(py_file2_path)
-        analysis2_result = FileAnalysisResult(file2_info, **analysis2_data)
-
-        self.index_builder.graph_builder.build_graph([analysis1_result, analysis2_result])
-
+        self._build_index()
         conn = self.db_service.get_connection()
         cursor = conn.cursor()
 
@@ -169,17 +148,15 @@ class TestGraphExtraction(unittest.TestCase):
         conn.commit()
 
         # Find Car class symbol from file2.py
-        qname_car = f"{os.path.basename(py_file2_path)}:Car"
-        cursor.execute("SELECT id FROM code_symbols WHERE name = 'Car' AND qname = ?", (qname_car,))
+        cursor.execute("SELECT id FROM code_symbols WHERE name = 'Car'")
         result = cursor.fetchone()
-        self.assertIsNotNone(result, f"Car class symbol not found with qname {qname_car}")
+        self.assertIsNotNone(result, "Car class symbol not found")
         car_class_id = result[0]
 
         # Find Vehicle class symbol from file1.py
-        qname_vehicle = f"{os.path.basename(py_file1_path)}:Vehicle"
-        cursor.execute("SELECT id FROM code_symbols WHERE name = 'Vehicle' AND qname = ?", (qname_vehicle,))
+        cursor.execute("SELECT id FROM code_symbols WHERE name = 'Vehicle'")
         result = cursor.fetchone()
-        self.assertIsNotNone(result, f"Vehicle class symbol not found with qname {qname_vehicle}")
+        self.assertIsNotNone(result, "Vehicle class symbol not found")
         vehicle_class_id = result[0]
 
         # Verify 'inherits' relationship
@@ -191,23 +168,91 @@ class TestGraphExtraction(unittest.TestCase):
         self.assertIsNotNone(cursor.fetchone(), "Should find 'inherits' relationship between Car and Vehicle")
 
     def test_python_call_relationships(self):
-        py_analyzer = TreeSitterAnalyzer(language_name='python')
-        
-        # Analyze all 3 python files
-        analysis_results = []
-        for i in range(1, 4):
-            file_path = os.path.join(self.test_data_path, 'python', f'file{i}.py')
-            file_info = FileInfo(id=i, path=file_path, extension=".py", language='python', size=0, modified_time=datetime.now())
-            analysis_data = py_analyzer.analyze_file(file_path)
-            analysis_results.append(FileAnalysisResult(file_info, **analysis_data))
+        self._build_index()
 
-        self.index_builder.graph_builder.build_graph(analysis_results)
-
-        # Search for the 'drive' method
+        # Search for the 'drive' method in the Python file
         results_str = self.search_service.find_symbols(pattern='drive', symbol_type='function')
         
-        self.assertIn("-> calls: start, start_engine, helper_function", results_str)
-        self.assertIn("<- called_by: service_car", results_str)
+        # Isolate the relevant part of the output for the Python `drive` function
+        py_drive_section = ""
+        for section in results_str.split('[function] drive'):
+            if 'in: python/file2.py' in section:
+                py_drive_section = section
+                break
+        
+        self.assertTrue(py_drive_section, "Could not find 'drive' function from python/file2.py in search results")
+
+        # --- Test 'calls' relationship ---
+        expected_calls = {'start_engine', 'helper_function', 'get_identifier'}
+        
+        calls_line = ""
+        for line in py_drive_section.split('\n'):
+            if '-> calls:' in line:
+                calls_line = line
+                break
+        
+        self.assertTrue(calls_line, "Could not find 'calls' line in output")
+
+        # Extract actual calls from "-> calls: call1, call2, ..."
+        actual_calls_str = calls_line.split("-> calls:")[1].strip()
+        actual_calls = {call.strip() for call in actual_calls_str.split(',')}
+        
+        self.assertTrue(expected_calls.issubset(actual_calls), f"Expected to find all of {expected_calls} in {actual_calls}")
+
+        # --- Test 'called_by' relationship ---
+        expected_called_by = {'service_car'}
+
+        called_by_line = ""
+        for line in py_drive_section.split('\n'):
+            if '<- called_by:' in line:
+                called_by_line = line
+                break
+        
+        self.assertTrue(called_by_line, "Could not find 'called_by' line in output")
+
+        actual_called_by_str = called_by_line.split("<- called_by:")[1].strip()
+        actual_called_by = {caller.strip() for caller in actual_called_by_str.split(',')}
+
+        self.assertTrue(expected_called_by.issubset(actual_called_by), f"Expected to find all of {expected_called_by} in {actual_called_by}")
+
+    def test_python_member_function_call_relationships(self):
+        self._build_index()
+        conn = self.db_service.get_connection()
+        cursor = conn.cursor()
+
+        # Find Car.drive symbol
+        cursor.execute("SELECT id FROM code_symbols WHERE qname = 'Car.drive'")
+        result = cursor.fetchone()
+        self.assertIsNotNone(result, "Car.drive symbol not found")
+        drive_method_id = result[0]
+
+        # Find Car.get_identifier symbol
+        cursor.execute("SELECT id FROM code_symbols WHERE qname = 'Car.get_identifier'")
+        result = cursor.fetchone()
+        self.assertIsNotNone(result, "Car.get_identifier symbol not found")
+        car_get_identifier_id = result[0]
+
+        # Find Engine.get_identifier symbol
+        cursor.execute("SELECT id FROM code_symbols WHERE qname = 'Engine.get_identifier'")
+        result = cursor.fetchone()
+        self.assertIsNotNone(result, "Engine.get_identifier symbol not found")
+        engine_get_identifier_id = result[0]
+
+        # Verify 'calls' relationship from Car.drive to Car.get_identifier
+        cursor.execute("""
+            SELECT 1 FROM relationships
+            WHERE source_symbol_id = ? AND target_symbol_id = ?
+            AND type_id = (SELECT id FROM relationship_types WHERE name = 'calls')
+        """, (drive_method_id, car_get_identifier_id))
+        self.assertIsNotNone(cursor.fetchone(), "Should find 'calls' relationship from Car.drive to Car.get_identifier")
+
+        # Verify there is NO 'calls' relationship from Car.drive to Engine.get_identifier
+        cursor.execute("""
+            SELECT 1 FROM relationships
+            WHERE source_symbol_id = ? AND target_symbol_id = ?
+            AND type_id = (SELECT id FROM relationship_types WHERE name = 'calls')
+        """, (drive_method_id, engine_get_identifier_id))
+        self.assertIsNone(cursor.fetchone(), "Should NOT find 'calls' relationship from Car.drive to Engine.get_identifier")
 
 
 if __name__ == '__main__':

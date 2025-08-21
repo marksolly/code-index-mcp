@@ -237,7 +237,7 @@ class IndexService(BaseService):
             Number of files indexed
         """
         from ..indexing import IndexBuilder
-        from .database import DatabaseService
+        from ..db.database import DatabaseService
 
         print(f"Building index for project: {base_path}")
 

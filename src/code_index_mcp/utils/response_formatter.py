@@ -8,8 +8,6 @@ services to ensure uniform response structures and formats.
 import json
 from typing import Any, Dict, List, Optional, Union
 
-from ..indexing.duplicate_detection import detect_duplicate_functions, detect_duplicate_classes
-
 
 class ResponseFormatter:
     """
@@ -44,57 +42,7 @@ class ResponseFormatter:
         # This function is now a no-op, as qnames are expected to be pre-generated.
         # It can be removed later if confirmed to be unused.
         return relationship_list
-    
-    @staticmethod
-    def _get_duplicate_names_from_index(index_cache: Optional[Dict[str, Any]] = None) -> Dict[str, set]:
-        """
-        Extract duplicate function and class names from index cache.
-        
-        Args:
-            index_cache: Optional index cache
-            
-        Returns:
-            Dictionary with 'functions' and 'classes' sets of duplicate names
-        """
-        duplicates = {'functions': set(), 'classes': set()}
-        
-        if not index_cache:
-            return duplicates
-        
-        try:
-            # Create a temporary CodeIndex-like object for duplicate detection
-            from ..indexing.models import CodeIndex
-            
-            # Convert index_cache to CodeIndex format if needed
-            if isinstance(index_cache, dict) and 'lookups' in index_cache and index_cache['lookups'] is not None:
-                # Validate lookups structure before creating CodeIndex
-                lookups = index_cache.get('lookups', {})
-                if not isinstance(lookups, dict):
-                    return duplicates
-                
-                temp_index = CodeIndex(
-                    project_metadata=index_cache.get('project_metadata', {}),
-                    directory_tree=index_cache.get('directory_tree', {}),
-                    files=index_cache.get('files', []),
-                    lookups=lookups,
-                    reverse_lookups=index_cache.get('reverse_lookups', {}),
-                    special_files=index_cache.get('special_files', {}),
-                    index_metadata=index_cache.get('index_metadata', {})
-                )
-                
-                # Detect duplicates with additional error handling
-                duplicate_functions = detect_duplicate_functions(temp_index)
-                duplicate_classes = detect_duplicate_classes(temp_index)
-                
-                duplicates['functions'] = set(duplicate_functions.keys())
-                duplicates['classes'] = set(duplicate_classes.keys())
-                
-        except (ImportError, AttributeError, KeyError, TypeError):
-            # If we can't detect duplicates, return empty sets
-            pass
-        
-        return duplicates
-    
+
     @staticmethod
     def success_response(message: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
@@ -220,9 +168,6 @@ class ResponseFormatter:
         Returns:
             Formatted file summary response
         """
-        # Get duplicate names from index for qualified name resolution
-        duplicate_names = ResponseFormatter._get_duplicate_names_from_index(index_cache)
-        
         # Handle backward compatibility for functions
         processed_functions = []
         if functions:
@@ -233,17 +178,6 @@ class ResponseFormatter:
                 elif isinstance(func, dict):
                     # New format - use complete object and resolve qualified names in relationships
                     processed_func = func.copy()
-                    
-                    # Resolve qualified names in relationship fields
-                    if 'calls' in processed_func and isinstance(processed_func['calls'], list):
-                        processed_func['calls'] = ResponseFormatter._resolve_qualified_names_in_relationships(
-                            file_path, processed_func['calls'], duplicate_names['functions'], index_cache
-                        )
-                    
-                    if 'called_by' in processed_func and isinstance(processed_func['called_by'], list):
-                        processed_func['called_by'] = ResponseFormatter._resolve_qualified_names_in_relationships(
-                            file_path, processed_func['called_by'], duplicate_names['functions'], index_cache
-                        )
                     
                     processed_functions.append(processed_func)
         
@@ -257,12 +191,6 @@ class ResponseFormatter:
                 elif isinstance(cls, dict):
                     # New format - use complete object and resolve qualified names in relationships
                     processed_cls = cls.copy()
-                    
-                    # Resolve qualified names in relationship fields
-                    if 'instantiated_by' in processed_cls and isinstance(processed_cls['instantiated_by'], list):
-                        processed_cls['instantiated_by'] = ResponseFormatter._resolve_qualified_names_in_relationships(
-                            file_path, processed_cls['instantiated_by'], duplicate_names['functions'], index_cache
-                        )
                     
                     processed_classes.append(processed_cls)
         
