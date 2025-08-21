@@ -47,12 +47,18 @@ A qualified name must only have two parts. The separator (`:` or `.`) depends on
 
 ---
 
-## Step 1: Define the Language Definition
+## Step 1: Define the Language Definition and Opt into Generic Analyzers
 
-Before creating tests, you must define the language's core properties by creating a `LanguageDefinition` class. This class tells the indexer which symbol and relationship types are supported for your language, preventing invalid data from being indexed.
+Before creating tests, you must define the language's core properties by creating a `LanguageDefinition` class. This class tells the indexer which symbol and relationship types are supported and, most importantly, allows you to **opt into powerful, pre-built generic analyzers**.
 
 -   **Location**: `src/code_index_mcp/indexing/languages.py`
 -   **Action**: Create a new class that inherits from `LanguageDefinition` and implement the abstract properties.
+
+### The Power of Generic Analyzers
+
+The indexing pipeline includes a suite of generic analyzers that can handle common language features out of the box. By opting into these, you can often get a significant portion of your language support working with minimal effort.
+
+**Your first step should always be to enable the relevant generic analyzers.**
 
 ### Example: `GoLanguageDefinition`
 
@@ -69,25 +75,36 @@ class GoLanguageDefinition(LanguageDefinition):
     @property
     def supported_symbol_types(self) -> List[str]:
         return [
-            "struct",
-            "method",
+            "file",
+            "import",
+            "class",
             "function",
-            "module",
+            "variable",
         ]
 
     @property
     def supported_relationship_types(self) -> List[str]:
         return [
-            "contains_method",
-            "instantiates",
-            "calls",
             "imports",
+            "calls",
+            "instantiates",
+            "is_instance_of",
+            "inherits",
+        ]
+
+    @property
+    def uses_generic_analyzers(self) -> List[str]:
+        return [
+            "GenericDeclarationAnalyzer",
+            "GenericIsInstanceOfAnalyzer",
+            "GenericInheritsAnalyzer",
+            "GenericImportAnalyzer",
         ]
 ```
 
 ### Why is this important?
 
-The `IndexWriter` uses this definition to validate every symbol and relationship it receives. If you attempt to add a symbol or relationship with a type that is not in these lists, the `IndexWriter` will log a warning and discard it. This ensures data integrity and helps you catch errors early in the development process.
+By defining your language and opting into generic analyzers from the start, you leverage the existing infrastructure to do the heavy lifting. This allows you to focus on the unique aspects of your language, rather than reinventing the wheel for common features like imports, inheritance, and instantiations.
 
 ---
 
@@ -188,8 +205,20 @@ When a test fails and `--failfast` is specified, the suite runner provides a det
 
 ## Step 3: Implement the Symbol Extractor (Phase 1)
 
-The `SymbolExtractor` is the first piece of logic you'll write. It has two jobs:
-1.  Identify all symbols in a file.
+The `SymbolExtractor` is the first piece of logic you'll write. Your extractor must inherit from `BaseSymbolExtractor` located in `src/code_index_mcp/indexing/symbol_extractors/base.py`.
+
+### Leveraging the Base Class
+
+The `BaseSymbolExtractor` provides a set of language-agnostic utilities for common tasks, such as traversing the AST and resolving scopes. You should rely on these helpers to reduce boilerplate and ensure consistency. The base class includes methods like:
+-   `_get_enclosing_scope_qname`
+-   `_get_source_qname_for_node`
+
+It also defines a clear contract through abstract methods that your implementation must provide.
+
+### Core Responsibilities
+
+Your extractor has two main jobs:
+1.  Identify all symbols in a file by implementing the abstract methods defined in the base class.
 2.  Identify all **first-order relationships** and **unresolved relationships**.
 
 -   **Location**: `src/code_index_mcp/indexing/symbol_extractors/go_extractor.py`
@@ -243,6 +272,12 @@ Your extractor runs `tree-sitter` queries to find symbol declarations.
 ## Step 4: Implement Relationship Analyzers (Phase 2 & 3)
 
 After you have a working `SymbolExtractor`, you can start implementing `RelationshipAnalyzer` classes. These are responsible for resolving the `unresolved_relationships` logged during Phase 1.
+
+### Leveraging Generic Analyzers
+
+Before writing a new analyzer, check the `src/code_index_mcp/indexing/relationship_analyzers/common/` directory. This directory contains a growing library of generic, reusable analyzers for common relationship types (e.g., `instantiates`, `inherits`, `declares`).
+
+**You should always prefer using a generic analyzer over writing a new one.** Only create a language-specific analyzer if the language has unique semantics that the generic implementation cannot handle.
 
 Analyzers are organized into phase-specific directories. This separation is critical because some analyses depend on the results of others.
 
@@ -307,3 +342,11 @@ This is a great candidate for a generic analyzer that can be reused across langu
     5.  Delete the unresolved entry.
 
 By breaking down the problem into these phases and small, single-purpose components, adding a new language becomes a methodical process of defining correctness through tests and implementing simple, focused logic to satisfy them.
+
+## Note for LLMs, Agents and Coding Assistants
+Attention: Claude, Cline, Cursor, Grok, Gemini & others.
+
+Working with this codebase requires having "the big picture" and using all the component classes together correctly. 
+
+In the first instance, use code-scope-mcp find_symbols tool for discovery (if available). When applicable files have been identified, agents and assistants are recommended to perform a bulk read before planning or beginning any task. Eg:
+`rg --files <file_or_folder1> <file_or_folder2> [<file_or_folder3>...]  | xargs -I {} sh -c 'echo "--- {} ---"; cat {}; echo'`

@@ -115,6 +115,16 @@ class IndexWriter:
             }
         )
 
+    def delete_unresolved_relationship(self, resolved_id: int):
+        """Deletes a single resolved relationship from the unresolved_relationships table."""
+        cursor = self.db_connection.cursor()
+        try:
+            query = "DELETE FROM unresolved_relationships WHERE id = ?"
+            cursor.execute(query, (resolved_id,))
+            self.db_connection.commit()
+        finally:
+            cursor.close()
+
     def delete_unresolved_relationships(self, resolved_ids: List[int]):
         """Deletes resolved relationships from the unresolved_relationships table."""
         if not resolved_ids:

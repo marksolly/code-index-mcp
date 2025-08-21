@@ -157,9 +157,11 @@ class IndexingOrchestrator:
             return self.language_analyzers[cache_key]
 
         analyzers = {}
+        language_definition = self._get_language_definition(language)
+        generic_analyzers_to_use = language_definition.uses_generic_analyzers
 
-        # Discover common analyzers for the given phase
-        self._discover_analyzers("common", phase, analyzers)
+        # Discover common analyzers, but only if they are in the opt-in list
+        self._discover_analyzers("common", phase, analyzers, filter_by=generic_analyzers_to_use)
 
         # Discover language-specific analyzers for the given phase
         self._discover_analyzers(language, phase, analyzers)
@@ -167,7 +169,7 @@ class IndexingOrchestrator:
         self.language_analyzers[cache_key] = list(analyzers.values())
         return self.language_analyzers[cache_key]
 
-    def _discover_analyzers(self, language_or_common: str, phase: str, analyzers: dict):
+    def _discover_analyzers(self, language_or_common: str, phase: str, analyzers: dict, filter_by: Optional[List[str]] = None):
         package_path = Path(__file__).parent / "relationship_analyzers" / language_or_common / phase
 
         if not package_path.is_dir():
@@ -181,7 +183,10 @@ class IndexingOrchestrator:
                 for attribute_name in dir(module):
                     attribute = getattr(module, attribute_name)
                     if isinstance(attribute, type) and issubclass(attribute, BaseRelationshipAnalyzer) and attribute is not BaseRelationshipAnalyzer:
-                        # Use a key to allow language-specific to override common
+                        # If a filter is provided, only include analyzers in the filter
+                        if filter_by and attribute.__name__ not in filter_by:
+                            continue
+
                         analyzer_key = attribute.relationship_type
                         if analyzer_key:
                             analyzers[analyzer_key] = attribute

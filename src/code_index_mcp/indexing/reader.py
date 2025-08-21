@@ -31,6 +31,10 @@ class IndexReader:
         """
         Finds symbols by name or qname with exact or LIKE matching.
         At least one of name or qname must be provided.
+
+        Expect that this method will possibly return multiple rows for a single qname.
+        qnames are not guaranteed to be globally unique and our indexing system embraces 
+        ambiguity by design. See NEW_LANG_GUIDE.md.
         """
         if not name and not qname:
             raise ValueError("At least one of 'name' or 'qname' must be provided.")
@@ -148,57 +152,66 @@ class IndexReader:
         finally:
             cursor.close()
 
-    def find_unresolved(self, relationship_type: str, **criteria) -> List[sqlite3.Row]:
+    def find_unresolved(self, relationship_type: Optional[str] = None, **criteria) -> List[sqlite3.Row]:
         """
-        Finds unresolved relationships for a given type, with flexible criteria.
-        Supports exact and LIKE matching (by appending '__like' to a key).
+        Finds unresolved relationships with flexible criteria. If relationship_type
+        is provided, it filters by that type.
+
+        Supports exact and LIKE matching by appending '__like' to a key, and also
+        supports checking for non-null values by appending '__is_not_null'.
 
         Example:
             reader.find_unresolved("imports", target_name="MyClass")
             reader.find_unresolved("calls", target_qname__like="%.__init__")
+            reader.find_unresolved(target_qname__is_not_null=True)
         """
         cursor = self.db_connection.cursor()
         try:
-            # First, get the relationship type ID
-            cursor.execute("SELECT id FROM relationship_types WHERE name = ?", (relationship_type,))
-            rel_type_row = cursor.fetchone()
-            if not rel_type_row:
-                self.logger.log("IndexReader", f"Relationship type '{relationship_type}' not found.")
-                return []
-            rel_type_id = rel_type_row["id"]
+            conditions = []
+            params: List[Any] = []
 
-            # Build the WHERE clause from criteria
-            conditions = ["ur.relationship_type_id = ?"]
-            params: List[Any] = [rel_type_id]
+            if relationship_type:
+                cursor.execute("SELECT id FROM relationship_types WHERE name = ?", (relationship_type,))
+                rel_type_row = cursor.fetchone()
+                if not rel_type_row:
+                    self.logger.log("IndexReader", f"Relationship type '{relationship_type}' not found.")
+                    return []
+                rel_type_id = rel_type_row["id"]
+                conditions.append("ur.relationship_type_id = ?")
+                params.append(rel_type_id)
 
             for key, value in criteria.items():
                 if key.endswith("__like"):
-                    column = key[:-6]  # remove __like
-                    operator = "LIKE"
+                    column, operator = key[:-6], "LIKE"
+                    conditions.append(f"ur.{column} {operator} ?")
+                    params.append(value)
+                elif key.endswith("__is_not_null"):
+                    column, operator = key[:-13], "IS NOT NULL"
+                    if value:
+                        conditions.append(f"ur.{column} {operator}")
                 else:
-                    column = key
-                    operator = "="
-                conditions.append(f"ur.{column} {operator} ?")
-                params.append(value)
+                    column, operator = key, "="
+                    conditions.append(f"ur.{column} {operator} ?")
+                    params.append(value)
 
-            where_clause = " AND ".join(conditions)
+            where_clause = " AND ".join(conditions) if conditions else "1=1"
             query = f"""
-                SELECT ur.*, f.path as source_file_path, cs.qname as source_qname, needs_type.name as needs_type_name
+                SELECT ur.*, f.path as source_file_path, cs.qname as source_qname,
+                       needs_type.name as needs_type_name, rel_type.name as rel_type
                 FROM unresolved_relationships ur
                 JOIN code_symbols cs ON ur.source_symbol_id = cs.id
                 JOIN files f ON cs.file_id = f.id
                 JOIN relationship_types needs_type ON ur.needs_type_id = needs_type.id
+                JOIN relationship_types rel_type ON ur.relationship_type_id = rel_type.id
                 WHERE {where_clause}
             """
 
             cursor.execute(query, params)
             results = cursor.fetchall()
-            
+
             criteria_str = ", ".join(f"{k}={v}" for k, v in criteria.items())
-            self.logger.log(
-                "IndexReader",
-                f"find_unresolved('{relationship_type}', {criteria_str}) -> {len(results)} matches"
-            )
+            log_msg = f"find_unresolved('{relationship_type or ''}', {criteria_str}) -> {len(results)} matches"
+            self.logger.log("IndexReader", log_msg)
             return results
         finally:
             cursor.close()

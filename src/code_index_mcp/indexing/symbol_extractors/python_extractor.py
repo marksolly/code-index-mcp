@@ -56,13 +56,13 @@ class PythonSymbolExtractor(BaseSymbolExtractor):
             if node_type == 'import_statement' or node_type == 'import_from_statement':
                 self._handle_import(node, all_captures, file_qname, writer)
             elif node_type == 'class_definition':
-                self._handle_definition(node, all_captures, file_qname, "class", writer)
+                self._handle_definition(node, all_captures, file_qname, writer)
             elif node_type == 'function_definition':
-                self._handle_definition(node, all_captures, file_qname, "function", writer)
+                self._handle_definition(node, all_captures, file_qname, writer)
             elif node_type == 'call':
                 self._handle_call(node, all_captures, file_qname, writer)
             elif node_type == 'assignment' and capture_name == 'assignment':
-                self._handle_assignment(node, all_captures, file_qname, writer)
+                self._handle_instantiation(node, all_captures, file_qname, writer)
                 self._handle_constant_definition(node, all_captures, file_qname, writer)
             elif capture_name == 'constant_read':
                  self._handle_constant_reference(node, all_captures, file_qname, writer)
@@ -128,7 +128,7 @@ class PythonSymbolExtractor(BaseSymbolExtractor):
                 )
 
 
-    def _handle_definition(self, node, captures, file_qname: str, symbol_type: str, writer: IndexWriter):
+    def _handle_definition(self, node, captures, file_qname: str, writer: IndexWriter):
         name_node = node.child_by_field_name("name")
         if not name_node:
             return
@@ -140,6 +140,8 @@ class PythonSymbolExtractor(BaseSymbolExtractor):
             qname = f"{enclosing_scope_qname}:{symbol_name}"
         else:
             qname = f"{enclosing_scope_qname}.{symbol_name}"
+
+        symbol_type = node.type.replace('_definition', '') # 'class' or 'function'
 
         writer.add_symbol(Symbol(
             name=symbol_name,
@@ -198,7 +200,7 @@ class PythonSymbolExtractor(BaseSymbolExtractor):
             if original_file_path is not None:
                 self.logger.current_context["file_path"] = original_file_path
 
-    def _handle_assignment(self, node, captures, file_qname: str, writer: IndexWriter):
+    def _handle_instantiation(self, node, captures, file_qname: str, writer: IndexWriter):
         name_node = self._find_capture_in_node(captures, node, "name")
         value_node = self._find_capture_in_node(captures, node, "value")
 
@@ -408,62 +410,3 @@ class PythonSymbolExtractor(BaseSymbolExtractor):
 
     def _get_file_qname(self, file_path: str) -> str:
         return Path(file_path).name
-
-    def _get_enclosing_class_qname(self, node, captures, file_qname: str) -> str | None:
-        current = node.parent
-        while current is not None:
-            if current.type == 'class_definition':
-                name_node = current.child_by_field_name('name')
-                if name_node:
-                    class_name = name_node.text.decode()
-                    # Replicating logic from _handle_class_definition to construct qname
-                    enclosing_scope_qname = self._get_enclosing_scope_qname(current, captures, file_qname)
-                    if enclosing_scope_qname == file_qname:
-                        return f"{file_qname}:{class_name}"
-                    else:
-                        return f"{enclosing_scope_qname}.{class_name}"
-            current = current.parent
-        return None
-
-    def _find_capture_in_node(self, captures, node, capture_name):
-        """Finds the first captured node with a given name within a specific node."""
-        for captured_node, name in captures:
-            if name == capture_name:
-                current = captured_node
-                while current:
-                    if current == node:
-                        return captured_node
-                    current = current.parent
-        return None
-
-    def _get_source_qname_for_node(self, node, file_qname: str, captures) -> str:
-        current = node.parent
-        while current is not None:
-            if current.type in ['function_definition', 'class_definition']:
-                scope_name_node = current.child_by_field_name('name')
-                if scope_name_node:
-                    scope_name = scope_name_node.text.decode()
-                    parent_scope_qname = self._get_enclosing_scope_qname(current, captures, file_qname)
-                    if parent_scope_qname == file_qname:
-                        return f"{parent_scope_qname}:{scope_name}"
-                    else:
-                        return f"{parent_scope_qname}.{scope_name}"
-                break
-            current = current.parent
-        return file_qname
-
-    def _get_enclosing_scope_qname(self, node, captures, file_qname: str) -> str:
-        scope_parts = []
-        current = node.parent
-        while current is not None:
-            if current.type in ['class_definition']:
-                name_node = current.child_by_field_name('name')
-                if name_node:
-                    scope_parts.append(name_node.text.decode())
-            current = current.parent
-
-        if not scope_parts:
-            return file_qname
-
-        # If we are inside a class, the scope is just the class hierarchy, not the file.
-        return ".".join(reversed(scope_parts))
