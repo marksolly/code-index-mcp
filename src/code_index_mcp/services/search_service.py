@@ -389,7 +389,7 @@ class SearchService(BaseService):
                                 display_rel_type = 'called_by'
                             elif rel_type == 'instantiates':
                                 display_rel_type = 'instantiated_by'
-                            elif rel_type in ['inherits', 'contains_method']:
+                            elif rel_type in ['inherits', 'declares_class_method']:
                                 continue
 
                             if display_rel_type not in rel_groups:

@@ -10,4 +10,4 @@ class Symbol:
     file_path: str
     line_number: int
     language: str
-    parent_qname: Optional[str] = None
+    file_id: Optional[int] = None

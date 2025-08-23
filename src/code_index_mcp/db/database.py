@@ -154,8 +154,8 @@ class DatabaseService:
             cursor.execute(statement)
 
         # Pre-populate lookup tables
-        symbol_types = ['file', 'function', 'class', 'constant', 'import', 'global', 'variable', 'export', 'namespace']
-        relationship_types = ['calls', 'imports', 'inherits', 'instantiates', 'declares_file_function', 'declares_class_method', 'declares_class', 'declares_constant', 'references_variable', 'overrides', 'defines_namespace', 'is_instance_of']
+        symbol_types = ['file', 'function', 'class', 'method', 'constant', 'import', 'global', 'variable', 'export', 'namespace']
+        relationship_types = ['calls_file_function', 'calls_class_method', 'imports', 'inherits', 'instantiates', 'declares_file_function', 'declares_class_method', 'declares_class', 'declares_constant', 'references_variable', 'overrides', 'defines_namespace', 'is_instance_of']
 
         for s_type in symbol_types:
             cursor.execute("INSERT OR IGNORE INTO symbol_types (name) VALUES (?)", (s_type,))

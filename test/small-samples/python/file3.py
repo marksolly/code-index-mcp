@@ -3,6 +3,7 @@ from .file2 import Car
 class Garage:
     def __init__(self, name):
         self.name = name
+        self.loan_car = Car("Loan Car", "Diesel")
         self.cars = []
 
     def service_car(self, car_name, engine_type):

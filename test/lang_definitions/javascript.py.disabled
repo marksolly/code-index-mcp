@@ -1,0 +1,51 @@
+import os
+from typing import List, Dict, Any
+from test.lang_definitions.base_test_definition import BaseTestDefinition
+
+class JavascriptTestDefinition(BaseTestDefinition):
+    @property
+    def language_name(self) -> str:
+        return "javascript"
+
+    @property
+    def supported_relationships(self) -> List[str]:
+        return [
+            'declares_file_function',
+            'declares_class',
+            'declares_class_method',
+            'imports',
+            'inherits',
+            'instantiates',
+            'references_variable',
+            'calls',
+        ]
+
+    def get_sample_files(self) -> List[str]:
+        return [
+            "test/small-samples/javascript/file1.js",
+            "test/small-samples/javascript/file2.js",
+            "test/small-samples/javascript/file3.js",
+        ]
+
+    def _define_expected_relationships(self) -> List[Dict[str, Any]]:
+        return [
+            # file2.js
+            {'type': 'imports', 'count': 1, 'source_qname': 'file2.js', 'target_qname': 'file1.js'}, # not implemented yet
+            {'type': 'inherits', 'count': 1, 'source_qname': 'file2.js:Car', 'target_qname': 'file1.js:Vehicle'},
+            {'type': 'instantiates', 'count': 1, 'source_qname': 'Car.constructor', 'target_qname': 'file2.js:Engine'},
+            {'type': 'calls', 'count': 1, 'source_qname': 'Car.drive', 'target_qname': 'Vehicle.start'},
+            {'type': 'calls', 'count': 1, 'source_qname': 'Car.drive', 'target_qname': 'Engine.start_engine'},
+            {'type': 'calls', 'count': 1, 'source_qname': 'Car.drive', 'target_qname': 'file1.js:helper_function'},
+            {'type': 'calls', 'count': 1, 'source_qname': 'Car.drive', 'target_qname': 'Car.get_identifier'},
+            {'type': 'declares_class_method', 'count': 1, 'source_qname': 'file2.js:Car', 'target_qname': 'Car.constructor'},
+            {'type': 'declares_class_method', 'count': 1, 'source_qname': 'file2.js:Car', 'target_qname': 'Car.drive'},
+            {'type': 'declares_class_method', 'count': 1, 'source_qname': 'file2.js:Car', 'target_qname': 'Car.get_identifier'},
+            {'type': 'references_variable', 'count': 1, 'source_qname': 'Car.drive', 'target_qname': 'file1.js:MY_CONSTANT'},
+
+            # file3.js
+            {'type': 'imports', 'count': 1, 'source_qname': 'file3.js', 'target_qname': 'file2.js'},
+            {'type': 'instantiates', 'count': 1, 'source_qname': 'Garage.service_car', 'target_qname': 'file2.js:Car'},
+            {'type': 'calls', 'count': 1, 'source_qname': 'Garage.service_car', 'target_qname': 'Car.drive'},
+            {'type': 'instantiates', 'count': 1, 'source_qname': 'file3.js:main', 'target_qname': 'file3.js:Garage'},
+            {'type': 'calls', 'count': 1, 'source_qname': 'file3.js:main', 'target_qname': 'Garage.service_car'},
+        ]

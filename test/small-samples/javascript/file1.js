@@ -13,3 +13,7 @@ export class Vehicle {
         return `${this.name} is starting.`;
     }
 }
+
+export const vehiclePolisher = () => {
+    return "The paint looks immaculate!";
+};

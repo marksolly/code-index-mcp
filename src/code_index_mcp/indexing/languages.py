@@ -26,18 +26,18 @@ class LanguageDefinition(ABC):
 
     @property
     @abstractmethod
-    def uses_generic_analyzers(self) -> List[str]:
+    def uses_generic_handlers(self) -> List[str]:
         """
-        A list of generic analyzer names that this language definition opts into.
-        Generic analyzers listed here will be used for this language.
+        A list of generic handler names that this language definition opts into.
+        Generic handlers listed here will be used for this language.
         LanguageDefinition subclasses can override this method to change which
-        generic analyzers they use.
+        generic handlers they use.
 
         Eg:
             return [
-                "GenericDeclarationAnalyzer",
-                "GenericIsInstanceOfAnalyzer",
-                "GenericInheritsAnalyzer",
+                "CallRelationshipHandler",
+                "InstantiationRelationshipHandler",
+                "InheritsRelationshipHandler",
             ]
         """
         pass
@@ -54,6 +54,7 @@ class PythonLanguageDefinition(LanguageDefinition):
             "import",
             "class",
             "function",
+            "method",
             "variable",
             "constant",
         ]
@@ -62,7 +63,8 @@ class PythonLanguageDefinition(LanguageDefinition):
     def supported_relationship_types(self) -> List[str]:
         return [
             "imports",
-            "calls",
+            "calls_class_method",
+            "calls_file_function",
             "instantiates",
             "is_instance_of",
             "inherits",
@@ -74,12 +76,14 @@ class PythonLanguageDefinition(LanguageDefinition):
         ]
 
     @property
-    def uses_generic_analyzers(self) -> List[str]:
+    def uses_generic_handlers(self) -> List[str]:
         return [
-            "GenericDeclarationAnalyzer",
-            "GenericIsInstanceOfAnalyzer",
-            "GenericInheritsAnalyzer",
-            "GenericInstantiationAnalyzer",
+            "ImportRelationshipHandler",
+            "InstantiationRelationshipHandler",
+            "InheritsRelationshipHandler",
+            "FileFunctionCallRelationshipHandler",
+            "MemberFunctionCallRelationshipHandler",
+            "IsInstanceOfRelationshipHandler",
         ]
 
 
@@ -96,29 +100,25 @@ class JavascriptLanguageDefinition(LanguageDefinition):
             "class",
             "function",
             "variable",
-            "constant",
+            "arrow_function",
         ]
 
     @property
     def supported_relationship_types(self) -> List[str]:
         return [
             "imports",
-            "calls",
-            "instantiates",
+            "references_variable",
             "is_instance_of",
+            "declares_class",
+            "instantiates",
             "inherits",
             "declares_file_function",
             "declares_class_method",
-            "references_variable",
-            "defines_namespace",
-            "declares_class",
+            "calls",
         ]
 
     @property
-    def uses_generic_analyzers(self) -> List[str]:
+    def uses_generic_handlers(self) -> List[str]:
         return [
-            "GenericDeclarationAnalyzer",
-            "GenericIsInstanceOfAnalyzer",
-            "GenericInheritsAnalyzer",
-            "GenericInstantiationAnalyzer"
+            "CallRelationshipHandler",
         ]

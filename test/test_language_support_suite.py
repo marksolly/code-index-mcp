@@ -6,11 +6,17 @@ It dynamically discovers and loads test definitions for various programming lang
 
 Usage examples with `uv run`:
 
+First, ensure correct python virtual environment is active:
+    `source /home/htpc/code-index-mcp/.venv/bin/activate`
+
 1. Run all language tests:
    uv run python test/test_language_support_suite.py --failfast
 
 2. Run tests for a single language (e.g., Python):
    uv run python test/test_language_support_suite.py --language=python --failfast
+
+3. Dump test plan without running tests:
+   uv run python test/test_language_support_suite.py --dump-plan [--language=python]
 """
 import unittest
 import os
@@ -20,6 +26,7 @@ import sys
 import argparse
 import time
 import re
+import json
 
 # Add project root to the Python path to allow running from any directory
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -130,11 +137,33 @@ class AutoDebugTestResult(unittest.TextTestResult):
         super().addError(test, err)
 
 
+class TestResultWithPersistence(AutoDebugTestResult):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.passed_tests_file = os.path.join(project_root, 'test', 'passed_tests.json')
+        self.passed_tests = self._load_passed_tests()
+
+    def _load_passed_tests(self):
+        if os.path.exists(self.passed_tests_file):
+            with open(self.passed_tests_file, 'r') as f:
+                return set(json.load(f))
+        return set()
+
+    def addSuccess(self, test):
+        super().addSuccess(test)
+        self.passed_tests.add(test.id())
+
+    def save_passed_tests(self):
+        with open(self.passed_tests_file, 'w') as f:
+            json.dump(sorted(list(self.passed_tests)), f, indent=4)
+
+
 class AutoDebugTestRunner(unittest.TextTestRunner):
     """A custom test runner that uses our custom result class."""
     def _makeResult(self):
         """This is the key change to use our custom result object."""
-        return AutoDebugTestResult(self.stream, self.descriptions, self.verbosity)
+        # return AutoDebugTestResult(self.stream, self.descriptions, self.verbosity)
+        return TestResultWithPersistence(self.stream, self.descriptions, self.verbosity)
 
 
 def load_tests(loader, tests, pattern):
@@ -165,7 +194,7 @@ def load_tests(loader, tests, pattern):
                                 # First, verify both symbols exist
                                 self.verifier.assert_symbol_exists(rel['source'], lang, rel.get('source_qname'))
                                 self.verifier.assert_symbol_exists(rel['target'], lang, rel.get('target_qname'))
-                                
+
                                 # Then, verify the relationship
                                 self.verifier.assert_relationship(
                                     rel['source'],
@@ -176,8 +205,10 @@ def load_tests(loader, tests, pattern):
                                     rel.get('source_qname'),
                                     rel.get('target_qname')
                                 )
-                            
-                            test_name = f"test_{definition_instance.language_name}_{rel['type']}_{rel['source']}_to_{rel['target']}"
+
+                            # Use execution order to ensure correct test execution order
+                            execution_order = rel.get('_execution_order', 0)
+                            test_name = f"test_{execution_order:04d}_{definition_instance.language_name}_{rel['type']}_{rel['source']}_to_{rel['target']}"
                             setattr(DynamicTestClass, test_name, test_method)
                     
                     for member_name, member_obj in inspect.getmembers(definition_instance):
@@ -192,7 +223,7 @@ def load_tests(loader, tests, pattern):
 
     return suite
 
-if __name__ == '__main__':
+def main():
     parser = argparse.ArgumentParser(description="Language Support Test Suite")
     parser.add_argument(
         '--language',
@@ -209,19 +240,152 @@ if __name__ == '__main__':
         action='store_true',
         help="Stop on first fail or error"
     )
+    parser.add_argument(
+        '--dump-plan',
+        action='store_true',
+        help="Dump test plan (list of tests that would run) without executing them"
+    )
     
     args, remaining_argv = parser.parse_known_args()
     
-    if args.language:
-        TestLanguageSupportSuite.language_to_test = args.language
-
     TestLanguageSupportSuite.auto_debug = args.auto_debug
     TestLanguageSupportSuite.fail_fast = args.failfast
-
     sys.argv = [sys.argv[0]] + remaining_argv
-    suite = unittest.TestLoader().loadTestsFromModule(sys.modules[__name__])
-    runner = AutoDebugTestRunner(failfast=args.failfast)
-    result = runner.run(suite)
 
-    if not result.wasSuccessful():
+    # Load passed tests from file once
+    passed_tests_file = os.path.join(project_root, 'test', 'passed_tests.json')
+    passed_tests_set = set()
+    if os.path.exists(passed_tests_file):
+        with open(passed_tests_file, 'r') as f:
+            passed_tests_set = set(json.load(f))
+
+    def get_all_tests(suite):
+        tests = []
+        for test in suite:
+            if isinstance(test, unittest.TestSuite):
+                tests.extend(get_all_tests(test))
+            else:
+                tests.append(test)
+        return tests
+
+    # Load the test suite and validate passed_tests.json contents
+    print("--- Loading test suite and validating passed_tests.json ---")
+    TestLanguageSupportSuite.language_to_test = args.language  # Respect language filter
+    full_suite = unittest.TestLoader().loadTestsFromModule(sys.modules[__name__])
+
+    # Validate passed_tests.json contents against current test suite
+    all_tests = get_all_tests(full_suite)
+    all_test_ids = {test.id() for test in all_tests}
+
+    invalid_tests = []
+    for test_id in passed_tests_set:
+        if test_id not in all_test_ids:
+            invalid_tests.append(test_id)
+
+    if invalid_tests:
+        print(f"❌ ERROR: {len(invalid_tests)} tests in passed_tests.json do not exist in current test suite:")
+        for test_id in sorted(invalid_tests):
+            print(f"  - {test_id}")
+
+        print(f"\n=== AVAILABLE TESTS IN CURRENT SUITE ({len(all_test_ids)} total) ===")
+        for i, test_id in enumerate(sorted(all_test_ids), 1):
+            print(f"{i:2d}. {test_id}")
+
+        print("\nThis indicates that test names have changed due to non-deterministic behavior")
+        print("or the test definitions have been modified since passed_tests.json was last updated.")
+        print("\nTo fix this:")
+        print("1. Update passed_tests.json with current valid test names from the list above.")
+        print("2. Remove any test names that no longer exist.")
+        print("3. Or investigate if there's non-deterministic test name generation.")
+        print("4. As an absolute last resort, delete passed_tests.json and accept undiagnosed regressions will occur.")
         sys.exit(1)
+    else:
+        print(f"✅ All {len(passed_tests_set)} entries in passed_tests.json are valid test names")
+
+    # If dump-plan flag is set, just show the test plan and exit
+    if args.dump_plan:
+        print("\n=== TEST PLAN ===")
+        print(f"Language filter: {args.language if args.language else 'All languages'}")
+        print(f"Auto-debug: {args.auto_debug}")
+        print(f"Fail-fast: {args.failfast}")
+        print()
+
+        # --- First Pass: Previously passed tests ---
+        print("--- Phase 1: Previously passed tests (regression check) ---")
+        passed_tests = []
+        for test in all_tests:
+            if test.id() in passed_tests_set:
+                passed_tests.append(test)
+
+        if passed_tests:
+            for i, test in enumerate(passed_tests, 1):
+                print(f"{i:2d}. {test.id()}")
+            print(f"Total: {len(passed_tests)} tests")
+        else:
+            print("No previously passed tests found.")
+        print()
+
+        # --- Second Pass: New and remaining tests ---
+        print("--- Phase 2: New and remaining tests ---")
+        new_tests = []
+        for test in all_tests:
+            if test.id() not in passed_tests_set:
+                new_tests.append(test)
+
+        if new_tests:
+            for i, test in enumerate(new_tests, 1):
+                print(f"{i:2d}. {test.id()}")
+            print(f"Total: {len(new_tests)} tests")
+        else:
+            print("No new or remaining tests found.")
+        print()
+
+        total_tests = len(passed_tests) + len(new_tests)
+        print(f"Grand total: {total_tests} tests")
+        print("\nUse --dump-plan to see this plan, omit the flag to actually run the tests.")
+        return
+
+    # --- First Pass: Run passed tests for the specified language (or all languages) to catch regressions ---
+    print("--- Running previously passed tests ---")
+
+    TestLanguageSupportSuite.language_to_test = args.language  # Respect language filter
+    full_suite_for_regression = unittest.TestLoader().loadTestsFromModule(sys.modules[__name__])
+
+    passed_suite = unittest.TestSuite()
+    for test in get_all_tests(full_suite_for_regression):
+        if test.id() in passed_tests_set:
+            passed_suite.addTest(test)
+
+    runner = AutoDebugTestRunner(failfast=args.failfast)
+    passed_result = runner.run(passed_suite)
+
+    if not passed_result.wasSuccessful():
+        print("\n--- Regressions detected in previously passed tests ---")
+        print("\nURGENT: Check your most recent changes for unintended consequences.")
+        if hasattr(passed_result, 'save_passed_tests'):
+            passed_result.save_passed_tests()
+        sys.exit(1)
+    else:
+        print("\n No regressions detected.")
+
+    # --- Second Pass: Run new and remaining tests ---
+    TestLanguageSupportSuite.language_to_test = args.language
+
+    suite_for_new_tests = unittest.TestLoader().loadTestsFromModule(sys.modules[__name__])
+
+    new_suite = unittest.TestSuite()
+    for test in get_all_tests(suite_for_new_tests):
+        if test.id() not in passed_tests_set:
+            new_suite.addTest(test)
+
+    print(f"\n--- Running {new_suite.countTestCases()} new and remaining tests ---")
+    new_result = runner.run(new_suite)
+
+    if hasattr(new_result, 'save_passed_tests'):
+        new_result.save_passed_tests()
+
+    if not new_result.wasSuccessful():
+        sys.exit(1)
+
+if __name__ == '__main__':
+    main()

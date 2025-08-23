@@ -1,4 +1,4 @@
-import { MY_CONSTANT, Vehicle, helper_function } from './file1.js';
+import { MY_CONSTANT, Vehicle, helper_function, vehiclePolisher } from './file1.js';
 
 class Engine {
     constructor(type) {
@@ -28,7 +28,8 @@ export class Car extends Vehicle {
         const start_message = this.start();
         const engine_message = this.engine.start_engine();
         const helper_message = helper_function();
+        const polish_message = vehiclePolisher();
         const licence_plate = this.get_identifier();
-        return `${start_message} | ${engine_message} | ${licence_plate} | Using helper: ${helper_message} | Constant: ${MY_CONSTANT}`;
+        return `${start_message} | ${engine_message} | ${licence_plate} | Using helper: ${helper_message} | Constant: ${MY_CONSTANT} | Polish: ${polish_message}`;
     }
 }

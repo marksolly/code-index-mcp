@@ -1,10 +1,12 @@
 # Developer's Guide to Adding a New Language
 
-This guide walks you through adding support for a new language to the code indexer. The architecture is a **phased, strategy-driven pipeline** designed to be highly modular and extensible. You'll add new languages by creating small, focused "analyzer" components that plug into this pipeline.
+This guide walks you through adding support for a new language to the code indexer. The architecture is a **phased, strategy-driven pipeline** designed to be highly modular and extensible. You'll add new languages by creating small, focused "relationship handler" components that plug into this pipeline.
 
 The process is entirely test-driven. You will first create tests and code samples, then implement the logic to make the tests pass.
 
 ## Static Analysis Philosophy
+
+We are creating a probabilistic map of relationships, not a concrete map.
 
 It is bordering on impossible to create a 100% concrete graph of relationships in a codebase without actually executing the code or creating elaborate lookups for every edge case. Therefore, we take a fail-soft approach that is accepting of some ambiguity, while being "good enough" for the mission of uncovering relationships and summarising dependencies.
 
@@ -12,44 +14,111 @@ It is bordering on impossible to create a 100% concrete graph of relationships i
 
 The indexing process happens in three phases:
 
-1.  **Phase 1: Symbol Extraction**: In this phase, a language-specific `SymbolExtractor` parses every file using `tree-sitter`. It identifies all primary symbols (classes, functions, etc.), constructs their qualified names (`qnames`), and records them. It also creates **first-order relationships** (those that can be determined directly from the file's syntax, like a class containing a method) and notes down any relationships that can't be figured out immediately in an `unresolved_relationships` table. This phase must complete for all files before Phase 2 begins.
+1.  **Phase 1: Symbol Extraction & Initial Relationship Extraction**: In this phase, a language-specific `SymbolExtractor` parses every file using `tree-sitter`. It identifies all primary symbols (classes, functions, etc.), constructs their qualified names (`qnames`), and records them. It also creates first-order relationships (those that can be determined directly from the file's syntax, like a class containing a method) and extracts unresolved relationships for later phases. Relationship Handlers then extract additional unresolved relationships from the AST for their specific relationship types.
 
-2.  **Phase 2: Intermediate Resolution**: After all symbols are known, a series of `RelationshipAnalyzer` classes run. They look at the `unresolved_relationships` table and try to solve the easy ones, like connecting an `import` statement to the file it imports, or a variable's type hint to a class definition in the same file.
+2.  **Phase 2: Intermediate Resolution**: After all symbols are known, relationship handlers run to resolve relationships that can be determined with current knowledge. They look at unresolved relationships and try to solve the straightforward ones, like connecting an `import` statement to the imported file, or a variable's type hint to a class definition in the same file.
 
-3.  **Phase 3: Final Relationship Resolution**: This final phase handles complex, multi-step resolutions. For example, to figure out where `my_var.method()` points, it first needs to find the type of `my_var` (resolved in Phase 2) and then find `method` on that type.
+3.  **Phase 3: Second Order Resolution**: This final phase handles complex, multi-step resolutions using relationship handlers. For example, to figure out where `my_var.method()` points, a handler first needs to find the type of `my_var` (resolved in Phase 2) and then find `method` on that type.
 
-Not all relationships require all three phases. Many can be fully resolved in Phase 2; Phase 3 is reserved for those that depend on the relationships built during the second phase.
+Each relationship type is handled by a single relationship handler that manages the complete lifecycle of that relationship across all phases. This provides better maintainability, testability, and separation of concerns.
 
 ---
 
 ## Qualified Names (qnames): The Standard
 
-A core concept is the **qualified name (`qname`)**. It's a more specific, context-aware name for a symbol that helps resolve ambiguity. While a simple `name` like `GetUser` could appear in many files, a `qname` provides a more precise identifier, without being globally unique.
+A core concept is the **qualified name (`qname`)**. It's a context-aware name for a symbol that helps resolve ambiguity. While a simple `name` like `GetUser` could appear in many files, a `qname` provides a more precise identifier, without being globally unique.
 
 Because of the inherent challenge of static analysis, this system is designed to be accepting of some ambiguity.
+
+A qname allows for the formation of probabilistic relationships because it is contextual but not entirely unique.
 
 **The Standard Format:** `<enclosing_scope>(:.)<symbol_name>`
 
 A qualified name must only have two parts. The separator (`:` or `.`) depends on enclosing scope type. Use `.` for object-oriented contexts (class methods) and `:` for file-level contexts (functions in a file).
+
+```
+QNAME_VALIDATION_REGEX = re.compile(r"^[a-zA-Z0-9_\-\.\/]+(:|\.|:__FILE__)[a-zA-Z0-9_\-]*$")
+```
 
 ### Examples of Correctly Formed Qnames:
 
 -   **Function in a file**: `my_utils.py:calculate`
 -   **Class in a file**: `my_models.py:User`
 -   **Method in a class**: `User.get_profile`
--   **File itself**: `my_utils.py` (When the file is the symbol, the file name is the qname).
+-   **File itself**: `my_utils.py:__FILE__` (When the file is the symbol, the file name is the qname with `:__FILE__` suffix).
 
 ### Examples of Incorrectly Formed Qnames:
 
 -   `my_models.py:User.get_profile` (Incorrect: Contains three parts. The filename should not be included for class methods.)
+-   `Garage.service_car.car` (Incorrect: Contains three parts. Only one enclosing scope should be used.)
 
 **Important**: `qnames` are intended to be reasonably identifying, but not guaranteed to be 100% unique and ambiguity is permitted. They are the primary tool for looking up symbols, but the system's final source of truth is the symbol's integer ID in the database.
 
+### File vs Symbol QName Distinction
+
+To resolve ambiguity between file references and symbol references, file qnames include a `:__FILE__` suffix.
+
+- **File qnames**: `filename.ext:__FILE__` (e.g., `main.go:__FILE__`)
+- **Symbol qnames**: Unchanged (e.g., `main.go:MyClass`, `MyClass.method`)
+
 ---
 
-## Step 1: Define the Language Definition and Opt into Generic Analyzers
+## System Architecture Overview
 
-Before creating tests, you must define the language's core properties by creating a `LanguageDefinition` class. This class tells the indexer which symbol and relationship types are supported and, most importantly, allows you to **opt into powerful, pre-built generic analyzers**.
+The indexing system is composed of a few key components. Understanding their hierarchy and roles is essential.
+
+```yaml
+IndexingOrchestrator:
+  description: "The main conductor of the indexing pipeline."
+  responsibilities:
+    - "Iterates through all files for a given language."
+    - "Invokes the correct SymbolExtractor for each file (Phase 1)."
+    - "Discovers and runs RelationshipHandlers across all phases."
+  interacts_with:
+    - LanguageDefinition
+    - YourSymbolExtractor
+    - YourRelationshipHandlers
+
+LanguageDefinition:
+  description: "A configuration class that defines the properties of a language."
+  responsibilities:
+    - "Specifies supported symbol and relationship types."
+    - "Opts into which GenericRelationshipHandlers to use."
+  used_by:
+    - IndexingOrchestrator
+
+YourSymbolExtractor (inherits from BaseSymbolExtractor):
+  description: "Parses a single file to find symbols and immediate relationships."
+  responsibilities:
+    - "Uses tree-sitter to parse the Abstract Syntax Tree (AST)."
+    - "Identifies symbols (classes, functions, etc.) and writes them to the database."
+    - "Creates immediate relationships and unresolved relationships for later phases."
+  phase: 1
+
+YourRelationshipHandler (inherits from BaseRelationshipHandler):
+  description: "Manages the complete lifecycle of a specific relationship type."
+  responsibilities:
+    - "Phase 1: Extracts unresolved relationships from AST."
+    - "Phase 2: Resolves relationships using knowledge extracted and saved in Phase 1."
+    - "Phase 3: Handles complex multi-step resolution using additional relationships created in Phase 2."
+  self_describing:
+    - "Declares its relationship_type, required_symbol_types, and phase_dependencies."
+
+GenericRelationshipHandler (inherits from BaseRelationshipHandler):
+  description: "A reusable handler for a common relationship type (e.g., 'inherits')."
+  note: "You should always prefer using a generic handler over writing a new one."
+  inheritance_model:
+    - "YourLanguageDefinition opts into a generic handler."
+    - "The Orchestrator discovers and uses the generic handler for your language."
+    - "You can override it by creating a language-specific handler for the same relationship type."
+```
+---
+
+## Step 1: Verify the Schema and Define the Language
+
+Before writing any code, you must **verify the database schema** in `src/code_index_mcp/db/database.py`. Ensure that the symbol and relationship types you plan to index are supported. Proposing new relationship types is a significant architectural change and should be avoided if possible.
+
+Once you have confirmed your approach is compatible with the schema, you must define the language's core properties by creating a `LanguageDefinition` class. This class tells the indexer which symbol and relationship types are supported and, most importantly, allows you to **opt into powerful, pre-built generic analyzers**.
 
 -   **Location**: `src/code_index_mcp/indexing/languages.py`
 -   **Action**: Create a new class that inherits from `LanguageDefinition` and implement the abstract properties.
@@ -93,12 +162,12 @@ class GoLanguageDefinition(LanguageDefinition):
         ]
 
     @property
-    def uses_generic_analyzers(self) -> List[str]:
+    def uses_generic_handlers(self) -> List[str]:
         return [
-            "GenericDeclarationAnalyzer",
-            "GenericIsInstanceOfAnalyzer",
-            "GenericInheritsAnalyzer",
-            "GenericImportAnalyzer",
+            "ImportRelationshipHandler",
+            "InstantiationRelationshipHandler",
+            "InheritsRelationshipHandler",
+            "CallRelationshipHandler",
         ]
 ```
 
@@ -106,20 +175,21 @@ class GoLanguageDefinition(LanguageDefinition):
 
 By defining your language and opting into generic analyzers from the start, you leverage the existing infrastructure to do the heavy lifting. This allows you to focus on the unique aspects of your language, rather than reinventing the wheel for common features like imports, inheritance, and instantiations.
 
----
-
 ## Step 2: Create the Test Environment
 
 Before writing any logic, set up the test case for your new language (e.g., "Go").
 
 1.  **Add Code Samples**: Create a directory `test/small-samples/go/`. Add small `.go` files that contain clear examples of the language features you want to index.
 2.  **Create a Test Definition**: Create `test/lang_definitions/go.py`. In it, define a `GoTestDefinition` class inheriting from `BaseTestDefinition`.
-3.  **Define Expected Relationships**: In your `GoTestDefinition`, create a method `get_expected_relationships` that returns a list of all relationships you expect to find. This defines correctness.
-4.  **Enable Relationships Incrementally**: Your `GoTestDefinition` must also have a `supported_relationships` list. The test runner will *only* run tests for the relationship types in this list. To follow a Test-Driven Development (TDD) approach:
-    a. Define all expected relationships in `get_expected_relationships`.
-    b. Comment out all but one relationship type in the `supported_relationships` list.
-    c. Implement the logic for that one relationship until the test passes.
-    d. Uncomment the next relationship type and repeat.
+3.  **Define Expected Relationships**: In your `GoTestDefinition`, create a method `_define_expected_relationships` that returns a list of all relationships you expect to find.
+4.  **Define Relationship Dependencies**: Your `GoTestDefinition` must have a `relationship_dependencies` property that defines which relationship types must be resolved before others. The system automatically sorts tests based on these dependencies to ensure they run in the correct logical order.
+
+5.  **Enable Relationships Incrementally**: The `supported_relationships` list is automatically generated from your `relationship_dependencies`. The test runner will *only* run tests for the relationship types in this list. To follow a Test-Driven Development (TDD) approach:
+    a. Define all expected relationships in `_define_expected_relationships`.
+    b. Define dependencies in `relationship_dependencies`.
+    c. Comment out relationship types in `relationship_dependencies` to test incrementally.
+    d. Implement the logic for relationships in dependency order.
+    e. Uncomment the next relationship type and repeat.
 
 ### Step 2a: Example Test Definition
 
@@ -136,34 +206,47 @@ class GoTestDefinition(BaseTestDefinition):
         return "go"
 
     @property
-    def supported_relationships(self) -> List[str]:
-        # Start by enabling only one relationship type to test.
-        # As you implement analyzers, you will uncomment more.
-        return [
-            'contains_method',
-            'instantiates',
-            # 'calls',
-        ]
+    def relationship_dependencies(self) -> Dict[str, List[str]]:
+        """
+        Define the dependency order for Go relationships.
+        Based on the 3-phase indexing pipeline.
+        """
+        return {
+            # Declaration relationships (Phase 1) - no dependencies
+            'declares_file_function': [],
+            'declares_class': [],
+
+            # Phase 2: Intermediate resolution - depends on symbol declarations
+            'imports': [],
+            'instantiates': ['declares_class'],
+            'is_instance_of': ['declares_class', 'instantiates'],
+
+            # Phase 3: Final resolution - depends on Phase 2 relationships
+            'calls': ['imports', 'declares_class'],
+        }
 
     def get_sample_files(self) -> List[str]:
         return ["test/small-samples/go/main.go"]
 
-    def get_expected_relationships(self) -> List[Dict[str, Any]]:
+    def _define_expected_relationships(self) -> List[Dict[str, Any]]:
         """
         Define the ground truth for relationships in the sample Go files.
+        Note: Relationships will be automatically sorted by dependency order.
         """
         return [
             # Test case for the first-order relationship in main.go
             {
                 'source_qname': 'main.go:User',
-                'target_qname': 'main.go:User.GetProfile',
-                'type': 'contains_method'
+                'type': 'declares_class_method',
+                'target_qname': 'User.GetProfile',
+                'count': 1
             },
             # Test case for the instantiation in main.go
             {
                 'source_qname': 'main.go:main',
+                'type': 'instantiates',
                 'target_qname': 'main.go:Car',
-                'type': 'instantiates'
+                'count': 1
             },
         ]
 ```
@@ -199,7 +282,17 @@ When a test fails and `--failfast` is specified, the suite runner provides a det
 
 4.  **Direct Database Inspection**: For complex issues, you can inspect the `test_code_index.db` file directly using a tool like `sqlite3`. This allows you to see the raw data and get a clear picture of what symbols and relationships were created.
 
-5.  **Logging**: If you need more detailed information, you can add more logging to your extractors and analyzers. The `--failfast` flag will re-run the indexer with more verbose logging for the failed test case. You can also temporarily disable symbol filtering in the logger (`IndexingLogger.filters['symbol_names'] = None`) to see all log messages, though this can be noisy.
+It is recommended to join all the tables to produce readable output. Eg:
+```
+sqlite3 test_code_index.db "SELECT s1.name as source_name, s1.qname as source_qname, rt.name as rel_type, s2.name as target_name, s2.qname as target_qname FROM relationships r JOIN code_symbols s1 ON r.source_symbol_id = s1.id JOIN code_symbols s2 ON r.target_symbol_id = s2.id JOIN relationship_types rt ON r.type_id = rt.id ORDER BY source_qname;"
+```
+
+Checking for duplicate relationships:
+```
+sqlite3 test_code_index.db "SELECT f.language, COUNT(*) as count, s1.name as source_name, s1.qname as source_qname, rt.name as rel_type, s2.name as target_name, s2.qname as target_qname FROM relationships r JOIN code_symbols s1 ON r.source_symbol_id = s1.id JOIN code_symbols s2 ON r.target_symbol_id = s2.id JOIN relationship_types rt ON r.type_id = rt.id JOIN files f ON s1.file_id = f.id GROUP BY source_qname, rel_type, target_qname, f.language HAVING COUNT(*) >= 2 ORDER BY source_qname;"
+```
+
+6.  **Logging**: If you need more detailed information, you can add more logging to your extractors and analyzers. The `--failfast` flag will re-run the indexer with more verbose logging for the failed test case. You can also temporarily disable symbol filtering in the logger (`IndexingLogger.filters['symbol_names'] = None`) to see all log messages, though this can be noisy.
 
 ---
 
@@ -252,7 +345,7 @@ Your extractor runs `tree-sitter` queries to find symbol declarations.
 
 3.  **Create a First-Order Relationship**:
     -   The relationship between the `User` struct and its `GetProfile` method is a **first-order relationship**. It can be fully determined just by looking at this file's AST. You don't need to look up any other symbols.
-    -   After adding both symbols, you would immediately call `writer.add_unresolved_relationship()` to create the `contains_method` link between `main.go:User` and `main.go:User.GetProfile`. Although it's resolvable, it's added this way for consistency in the pipeline.
+    -   After adding both symbols, you would immediately call `writer.add_unresolved_relationship()` to create the `declares_class_method` link between `main.go:User` and `main.go:User.GetProfile`. Although it's resolvable, it's added this way for consistency in the pipeline.
 
 4.  **Handling `instantiates` and `is_instance_of`**:
     -   When an assignment involves a class instantiation (e.g., `my_var = MyClass()`), the extractor should create **two** unresolved relationships:
@@ -265,88 +358,99 @@ Your extractor runs `tree-sitter` queries to find symbol declarations.
 6.  **Handling Complex Lookups with `intermediate_symbol_qname`**:
     -   For complex call chains like `my_var.engine.start()`, the extractor cannot directly resolve `start()`. It first needs to know the type of `my_var.engine`.
     -   To handle this, the `add_unresolved_relationship` method accepts an `intermediate_symbol_qname` parameter. The extractor should provide the qname of the intermediate symbol (`my_var.engine` in this case).
-    -   A Phase 3 analyzer can then use this information to perform a two-step lookup: first, find the type of `my_var.engine` (which must have been resolved in Phase 2), and then find the `start` method on that type.
+    -   The handler can then use this information in Phase 3 to perform a two-step lookup: first, find the type of `my_var.engine` (which must have been resolved in Phase 2), and then find the `start` method on that type.
 
 ---
 
-## Step 4: Implement Relationship Analyzers (Phase 2 & 3)
+## Step 4: Implement Relationship Handlers (Phase 1, 2 & 3)
 
-After you have a working `SymbolExtractor`, you can start implementing `RelationshipAnalyzer` classes. These are responsible for resolving the `unresolved_relationships` logged during Phase 1.
+After you have a working `SymbolExtractor`, you can start implementing `RelationshipHandler` classes. These are responsible for managing the complete lifecycle of specific relationship types across all phases.
 
-### Leveraging Generic Analyzers
+### Leveraging Generic Handlers
 
-Before writing a new analyzer, check the `src/code_index_mcp/indexing/relationship_analyzers/common/` directory. This directory contains a growing library of generic, reusable analyzers for common relationship types (e.g., `instantiates`, `inherits`, `declares`).
+Before writing a new handler, check the `src/code_index_mcp/indexing/relationship_handlers/common/` directory. This directory contains a growing library of generic, reusable handlers for common relationship types (e.g., `instantiates`, `inherits`, `calls`).
 
-**You should always prefer using a generic analyzer over writing a new one.** Only create a language-specific analyzer if the language has unique semantics that the generic implementation cannot handle.
+**You should always prefer using a generic handler over writing a new one.** Only create a language-specific handler if the language has unique semantics that the generic implementation cannot handle.
 
-Analyzers are organized into phase-specific directories. This separation is critical because some analyses depend on the results of others.
+Handlers must be registered in `languages.py`. 
 
--   **Principle**: One class, one job. A `GoCallAnalyzer` finds calls, while a `GoImportAnalyzer` resolves imports.
--   **No `tree-sitter`**: Analyzers **do not** parse files. They query the database for symbols and unresolved relationships recorded during Phase 1.
+-   **Principle**: One class, one relationship type. A `CallRelationshipHandler` manages all call relationships, while an `ImportRelationshipHandler` manages all import relationships.
+-   **Self-Describing**: Handlers declare their `relationship_type`, `required_symbol_types`, and `phase_dependencies`.
+-   **Unified Lifecycle**: Each handler manages extraction (Phase 1), immediate resolution (Phase 2), and second order resolution (Phase 3).
 
-### Phase 2: Intermediate Analyzers
+### A Note on Pragmatism and Creative Solutions
 
-These analyzers resolve foundational relationships that can be determined after all symbols are known. They establish the core structure of the codebase.
+The goal of the indexer is to provide a "good enough" overview of a codebase, not to create a perfect, 100% complete representation. This is especially true for complex features like variable scoping.
 
--   **Location**: `src/code_index_mcp/indexing/relationship_analyzers/go/phase_2/`
--   **Examples**: `imports`, `inherits`, `is_instance_of`. These relationships typically don't depend on other, more complex relationships.
-
-### Phase 3: Final Analyzers
-
-These analyzers tackle complex relationships that often depend on the results from Phase 2.
-
--   **Location**: `src/code_index_mcp/indexing/relationship_analyzers/go/phase_3/`
--   **Example**: A `calls` analyzer. To resolve `my_var.method()`, the analyzer first needs to know the type of `my_var`, which was likely determined by an `is_instance_of` analyzer in Phase 2.
-
-The orchestrator ensures all Phase 2 analyzers complete before any Phase 3 analyzers begin.
+-   **Focus on High-Signal Symbols**: When implementing features like variable tracking, prioritize "high-signal" symbols (e.g., module-level exports, constants) over indexing every local variable. This reduces noise and complexity.
+-   **Work Within Constraints**: Before proposing new relationship types, consider if you can creatively repurpose existing, supported types to achieve your goal. For example, using an `is_instance_of` relationship to represent a class alias is a pragmatic way to solve a language-specific problem without requiring schema changes. This embraces the "fail-soft" philosophy of the indexer.
 
 ### The Fallback Mechanism and Confidence Scoring
 
-You don't have to write a language-specific analyzer for every relationship type. The system automatically falls back to a generic implementation.
+You don't have to write a language-specific handler for every relationship type. You can register one of the generic handlers if it is suitable.
 
-1.  The orchestrator looks for `GoCallAnalyzer`.
-2.  If not found, it looks for `GenericCallAnalyzer` in the `common/` directory.
+1.  The orchestrator looks for `GoCallRelationshipHandler`.
+2.  If not found, it looks for `CallRelationshipHandler` in the `common/` directory.
 3.  If neither is found, the relationship is skipped for Go.
 
-You only need to create `go/calls.py` if you need to **override or specialize** the generic logic.
+You only need to create `go/call_relationship_handler.py` if you need to **override or specialize** the generic logic.
 
-**Improving Generic Analyzers**: If you find a flaw in a generic analyzer, it's better to improve the generic implementation than to create a language-specific workaround. This benefits all languages that use the generic analyzer.
+**Improving Generic Handlers**: If you find a flaw in a generic handler, it's better to improve the generic implementation than to create a language-specific workaround. This benefits all languages that use the generic handler.
 
-**Confidence Scoring**: The `IndexWriter.add_relationship` method supports a `confidence` parameter (a float between 0.0 and 1.0). This is useful for handling ambiguity. If an analyzer cannot uniquely identify a target symbol, it can create multiple low-confidence relationships. For example, if there are three possible target symbols, the analyzer could create three relationships, each with a confidence of `1/3`. This is a key part of the indexer's "fail-soft" philosophy.
+**Confidence Scoring**: The `IndexWriter.add_relationship` method supports a `confidence` parameter (a float between 0.0 and 1.0). This is useful for handling ambiguity. If a handler cannot uniquely identify a target symbol, it can create multiple low-confidence relationships. For example, if there are three possible target symbols, the handler could create three relationships, each with a confidence of `1/3`. This is a key part of the indexer's "fail-soft" philosophy.
 
-### Example: `instantiates` Relationship (Phase 2)
 
-**Go Code (`test/small-samples/go/main.go`):**
-```go
-type Car struct { ... }
-
-func main() {
-    myCar := Car{}
-}
-```
-
-Phase 1 extracts the symbol `main.go:Car` and logs an unresolved relationship:
--   `source_qname`: `main.go:main`
--   `target_name`: `Car`
--   `rel_type`: `instantiates`
-
-**Analyzer Logic (`generic_instantiation_analyzer.py`):**
-This is a great candidate for a generic analyzer that can be reused across languages.
-
--   **Location**: `src/code_index_mcp/indexing/relationship_analyzers/common/phase_2/generic_instantiation_analyzer.py`
--   **Logic**:
-    1.  Query `unresolved_relationships` for `instantiates`.
-    2.  For each one, first look for a symbol named `Car` defined in the same file (`main.go`). A query would look for a symbol with `qname` = `main.go:Car`.
-    3.  If not found, look for an `import` relationship from `main.go` that might bring `Car` into scope.
-    4.  Once the symbol for `Car` is found, use `writer.add_relationship()` to connect `main.go:main` to `main.go:Car`.
-    5.  Delete the unresolved entry.
-
-By breaking down the problem into these phases and small, single-purpose components, adding a new language becomes a methodical process of defining correctness through tests and implementing simple, focused logic to satisfy them.
-
-## Note for LLMs, Agents and Coding Assistants
+## Notes for LLMs, Agents and Coding Assistants
 Attention: Claude, Cline, Cursor, Grok, Gemini & others.
 
-Working with this codebase requires having "the big picture" and using all the component classes together correctly. 
+Working with this codebase requires having "the big picture" and using all the component classes together correctly. To operate effectively you also need a well defined plan because implementing a new language will exceed context length and contains too many details to execute in a single session.
 
-In the first instance, use code-scope-mcp find_symbols tool for discovery (if available). When applicable files have been identified, agents and assistants are recommended to perform a bulk read before planning or beginning any task. Eg:
+### Discovery
+In the first instance, use code-scope-mcp `find_symbols` tool for discovery (if available). When applicable files have been identified, agents and assistants are recommended to perform a bulk read before planning or beginning any task. Eg:
 `rg --files <file_or_folder1> <file_or_folder2> [<file_or_folder3>...]  | xargs -I {} sh -c 'echo "--- {} ---"; cat {}; echo'`
+
+### Off Limits - Read Only Files
+LLMs, agents and coding assistants are forbidden to modify the following files.
+
+Read Only: 
+   - orchestrator.py (IndexingOrchestrator)
+   - reader.py (IndexReader)
+   - writer.py (IndexWriter)
+
+If you think you need to modify these files, reassess your plan carefully and gather more context, you have missed something.
+
+### Planning
+Before working on a new language, LLMs & agents should insist on creating a detailed implementation plan containing a checklist with checkboxes. They should keep that checklist updated with their progress.
+
+A plan must include these sections:
+    1. List of symbols to be extracted (minimum is: `file`).
+    2. Section on relationships to be supported.
+        For each relationship:
+        2.1.  Processing required in Phase 1 (eg: extraction from AST, create unresolved relationships).
+        2.2.  Processing required in Phase 2 (eg: immediate resolution using saved symbols and relationships from Phase 1).
+        2.3.  Processing required in Phase 3 (eg: Second order resolutions using relationships created in Phase 2).
+    3. Relationship Dependencies
+        Define which relationship types must be resolved before others using the `relationship_dependencies` property.
+        The test suite automatically sorts tests based on these dependencies to ensure correct execution order. This will also help guide your phase 2 and phase 3 design.
+        Example: `'calls': ['imports', 'declares_class']`
+    4. List of Generic Handler classes to be used and rationale for using each.
+        Check `src/code_index_mcp/indexing/relationship_handlers/common/` for available generic handlers.
+        Example: `CallRelationshipHandler` for handling function/method calls.
+    5. List of Unsuitable Generic Handler classes.
+        Make sure you say why a generic handler is not suitable. Identifying the deficiency will give insight into the work to be done.
+        Example: `GenericCallHandler` doesn't handle language-specific call syntax.
+    6. List of proposed new Handler classes.
+        Specify which relationship types need custom handlers and why.
+        Example: `GoCallRelationshipHandler` for Go-specific call patterns.
+    7. List of relevant files for context, including which files from other languages will be used as examples.
+        Example: Look at `python_symbol_extractor.py` for symbol extraction patterns.
+    8. List of unknowns and assumptions.
+        Example: Assuming tree-sitter grammar for the language is available.
+    9. A detailed implementation checklist with checkboxes based on this guide.
+        Include specific tasks like:
+        - [ ] Create language definition in `languages.py`
+        - [ ] Implement symbol extractor
+        - [ ] Register generic handlers
+        - [ ] Create language-specific handlers (if needed)
+        - [ ] Update tests
+        - [ ] Validate with test suite (iteratively)

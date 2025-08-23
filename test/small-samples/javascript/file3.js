@@ -3,6 +3,7 @@ import { Car } from './file2.js';
 class Garage {
     constructor(name) {
         this.name = name;
+        this.loan_car = Car("Loan Car", "Diesel")
         this.cars = [];
     }
 

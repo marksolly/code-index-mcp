@@ -28,10 +28,26 @@ class IndexingLogger:
         if not self.enabled:
             return
 
-        full_context = {**self.current_context, **dump_vars}
+        full_context = {**dump_vars}
 
         formatted_message = self._format_message(component_name, message, full_context)
         print(formatted_message)
+
+
+    def mustLogForLang(self, component_name, message, **dump_vars):
+        """Logs a message if the language filter matches, regardless of other filters."""
+        if not self.enabled:
+            return
+        
+        full_context = {**dump_vars}
+
+        # Check language filter
+        if self.filters and self.current_context['language'] and 'language' in self.filters:
+            if self.current_context['language'] in self.filters['language']:
+                print(self._format_message(component_name, message, full_context))
+            else:
+                #print(F"Ignored, lang: {message}")
+                return
 
     def log(self, component_name: str, message: str, **dump_vars: Dict[str, Any]):
         """Logs a message if it passes the filters."""

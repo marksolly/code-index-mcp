@@ -11,7 +11,7 @@ class IndexReader:
     """
 
     # Filter allows for wildcard characters. Some method can use LIKE matches.
-    QNAME_VALIDATION_REGEX = re.compile(r"^[a-zA-Z0-9_\-\.\/\*\%]+(:|\.|\*|\%)[a-zA-Z0-9_\-\*\%]+$")
+    QNAME_VALIDATION_REGEX = re.compile(r"^[a-zA-Z0-9_\-\.\/\*\%]+(:|\.|\*|\%|:__FILE__)[a-zA-Z0-9_\-\*\%]*$")
 
     def __init__(self, db_connection: sqlite3.Connection, logger: IndexingLogger):
         self.db_connection = db_connection
@@ -26,15 +26,17 @@ class IndexReader:
             raise ValueError(f"IndexReader: Invalid qname format in {context}: '{qname}'");
 
     def find_symbols(
-        self, name: Optional[str] = None, qname: Optional[str] = None, match_type: str = "exact"
+        self, name: Optional[str] = None, qname: Optional[str] = None, match_type: str = "exact", language: Optional[str] = None
     ) -> List[sqlite3.Row]:
         """
         Finds symbols by name or qname with exact or LIKE matching.
         At least one of name or qname must be provided.
+        You are **STRONGLY RECOMMENDED** to specify a language.
 
-        Expect that this method will possibly return multiple rows for a single qname.
+        **Important** This method returns multiple rows for a single qname.
         qnames are not guaranteed to be globally unique and our indexing system embraces 
-        ambiguity by design. See NEW_LANG_GUIDE.md.
+        ambiguity by design. You may need to store multiple low confidence relationships.
+        See NEW_LANG_GUIDE.md.
         """
         if not name and not qname:
             raise ValueError("At least one of 'name' or 'qname' must be provided.")
@@ -50,6 +52,9 @@ class IndexReader:
             self._validate_qname(qname, "find_symbols")
             conditions.append(f"cs.qname {operator} ?")
             params.append(qname)
+        if language:
+            conditions.append("f.language = ?")
+            params.append(language)
 
         query = f"""
             SELECT cs.*, f.path as file_path, st.name as symbol_type
@@ -83,9 +88,10 @@ class IndexReader:
         finally:
             cursor.close()
 
-    def find_relationships(self, rel_type: Optional[str] = None, source_id: Optional[int] = None, target_id: Optional[int] = None, source_qname: Optional[str] = None, target_qname: Optional[str] = None) -> List[sqlite3.Row]:
+    def find_relationships(self, rel_type: Optional[str] = None, source_id: Optional[int] = None, target_id: Optional[int] = None, source_qname: Optional[str] = None, target_qname: Optional[str] = None, source_language: Optional[str] = None, target_language: Optional[str] = None) -> List[sqlite3.Row]:
         """
         Finds resolved relationships based on various criteria.
+        You are **STRONGLY RECOMMENDED** to specify a language.
         """
         conditions = []
         params = []
@@ -107,6 +113,12 @@ class IndexReader:
             self._validate_qname(target_qname, "find_relationships target")
             conditions.append("cs_target.qname = ?")
             params.append(target_qname)
+        if source_language:
+            conditions.append("f_source.language = ?")
+            params.append(source_language)
+        if target_language:
+            conditions.append("f_target.language = ?")
+            params.append(target_language)
 
         where_clause = " AND ".join(conditions) if conditions else "1=1"
 
@@ -119,7 +131,9 @@ class IndexReader:
             FROM relationships r
             JOIN relationship_types rt ON r.type_id = rt.id
             JOIN code_symbols cs_source ON r.source_symbol_id = cs_source.id
+            JOIN files f_source ON cs_source.file_id = f_source.id
             JOIN code_symbols cs_target ON r.target_symbol_id = cs_target.id
+            JOIN files f_target ON cs_target.file_id = f_target.id
             WHERE {where_clause}
         """
 
@@ -160,15 +174,19 @@ class IndexReader:
         Supports exact and LIKE matching by appending '__like' to a key, and also
         supports checking for non-null values by appending '__is_not_null'.
 
+        You are **STRONGLY RECOMMENDED** to specify a language.
+
         Example:
-            reader.find_unresolved("imports", target_name="MyClass")
-            reader.find_unresolved("calls", target_qname__like="%.__init__")
-            reader.find_unresolved(target_qname__is_not_null=True)
+            reader.find_unresolved("imports", target_name="MyClass", language="javascript")
+            reader.find_unresolved("calls", target_qname__like="%.__init__", language="python")
+            reader.find_unresolved(target_qname__is_not_null=True, language="javascript")
         """
         cursor = self.db_connection.cursor()
         try:
             conditions = []
             params: List[Any] = []
+
+            language = criteria.pop('language', None)
 
             if relationship_type:
                 cursor.execute("SELECT id FROM relationship_types WHERE name = ?", (relationship_type,))
@@ -180,6 +198,18 @@ class IndexReader:
                 conditions.append("ur.relationship_type_id = ?")
                 params.append(rel_type_id)
 
+            # Handle needs_type from criteria
+            needs_type = criteria.pop('needs_type', None)
+            if needs_type is not None:
+                cursor.execute("SELECT id FROM relationship_types WHERE name = ?", (needs_type,))
+                needs_type_row = cursor.fetchone()
+                if not needs_type_row:
+                    self.logger.log("IndexReader", f"Needs type '{needs_type}' not found.")
+                    return []
+                needs_type_id = needs_type_row["id"]
+                conditions.append("ur.needs_type_id = ?")
+                params.append(needs_type_id)
+            
             for key, value in criteria.items():
                 if key.endswith("__like"):
                     column, operator = key[:-6], "LIKE"
@@ -194,19 +224,27 @@ class IndexReader:
                     conditions.append(f"ur.{column} {operator} ?")
                     params.append(value)
 
+            if language:
+                conditions.append("f.language = ?")
+                params.append(language)
+
             where_clause = " AND ".join(conditions) if conditions else "1=1"
             query = f"""
                 SELECT ur.*, f.path as source_file_path, cs.qname as source_qname,
-                       needs_type.name as needs_type_name, rel_type.name as rel_type
+                       needs_type.name as needs_type_name, rt.name as rel_type
                 FROM unresolved_relationships ur
                 JOIN code_symbols cs ON ur.source_symbol_id = cs.id
                 JOIN files f ON cs.file_id = f.id
                 JOIN relationship_types needs_type ON ur.needs_type_id = needs_type.id
-                JOIN relationship_types rel_type ON ur.relationship_type_id = rel_type.id
+                JOIN relationship_types rt ON ur.relationship_type_id = rt.id
                 WHERE {where_clause}
             """
+            try:
+                cursor.execute(query, params)
+            except:
+                print(query)
+                raise
 
-            cursor.execute(query, params)
             results = cursor.fetchall()
 
             criteria_str = ", ".join(f"{k}={v}" for k, v in criteria.items())
