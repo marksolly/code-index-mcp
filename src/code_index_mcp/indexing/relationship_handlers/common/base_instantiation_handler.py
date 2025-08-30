@@ -1,4 +1,5 @@
-from typing import TYPE_CHECKING, Any
+from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
     from ..writer import IndexWriter
@@ -7,8 +8,13 @@ if TYPE_CHECKING:
 
 from ..base_relationship_handler import BaseRelationshipHandler
 
-class InstantiationRelationshipHandler(BaseRelationshipHandler):
-    """Handles the complete lifecycle of instantiation relationships."""
+
+class BaseInstantiationHandler(BaseRelationshipHandler, ABC):
+    """Abstract base class for instantiation relationship handlers.
+
+    This class contains the reusable logic for instantiation resolution while
+    delegating language-specific AST parsing and queries to subclasses.
+    """
 
     relationship_type = "instantiates"
 
@@ -27,44 +33,28 @@ class InstantiationRelationshipHandler(BaseRelationshipHandler):
            - Avoid complex lookups or relationship queries
            - Defer all resolution logic to Phase 2
 
-        Creates unresolved relationships for:
-        - Direct class instantiations (MyClass())
-        - Instantiations with parameters (MyClass(arg1, arg2))
-        - Instantiations assigned to variables (var = MyClass())
+        Creates unresolved relationships for class instantiations.
         """
-        from tree_sitter import Query
+        self.logger.log(self.__class__.__name__, "DEBUG: BaseInstantiationHandler.extract_from_ast called")
 
-        # Query for call expressions that might be class instantiations
-        # In Python, all instantiations look like function calls
-        instantiation_query = """
-            (call
-              function: (identifier) @class_name
-            ) @instantiation
-        """
+        # Get language-specific instantiation queries
+        instantiation_queries = self._get_instantiation_queries()
 
-        # Also query for attribute access instantiations (module.Class())
-        attribute_instantiation_query = """
-            (call
-              function: (attribute
-                object: (identifier) @module
-                attribute: (identifier) @class_name
-              )
-            ) @instantiation
-        """
+        for query_text in instantiation_queries:
+            query = self.language_obj.query(query_text)
+            captures = query.captures(tree.root_node)
 
-        # Process direct class instantiations
-        query = self.language_obj.query(instantiation_query)
-        captures = query.captures(tree.root_node)
+            for node, capture_name in captures:
+                if capture_name == "instantiation":
+                    # Extract instantiation details using language-specific method
+                    instantiation_details = self._extract_instantiation_from_node(node)
+                    if not instantiation_details:
+                        continue
 
-        for node, capture_name in captures:
-            if capture_name == "instantiation":
-                # Get the class name
-                function_node = node.child_by_field_name("function")
-                if function_node and function_node.type == "identifier":
-                    class_name = function_node.text.decode('utf-8')
-                    self.logger.log(self.__class__.__name__, f"DEBUG: Found direct instantiation: {class_name}")
+                    class_name = instantiation_details['class_name']
+                    self.logger.log(self.__class__.__name__, f"DEBUG: Found instantiation: {class_name}")
 
-                    # Find the containing context to create proper source qname
+                    # Find the containing context using language-specific method
                     source_qname = self._find_containing_context(node, file_qname)
 
                     if source_qname:
@@ -85,83 +75,30 @@ class InstantiationRelationshipHandler(BaseRelationshipHandler):
                         else:
                             self.logger.log(self.__class__.__name__, f"DEBUG: Source symbol not found: {source_qname}")
 
-        # Process attribute access instantiations (module.Class())
-        query = self.language_obj.query(attribute_instantiation_query)
-        captures = query.captures(tree.root_node)
+    @abstractmethod
+    def _get_instantiation_queries(self) -> list[str]:
+        """Return language-specific tree-sitter queries for finding instantiations."""
+        pass
 
-        for node, capture_name in captures:
-            if capture_name == "instantiation":
-                # Get module and class names
-                function_node = node.child_by_field_name("function")
-                if function_node and function_node.type == "attribute":
-                    # Extract module and class from attribute
-                    object_node = function_node.child_by_field_name("object")
-                    attribute_node = function_node.child_by_field_name("attribute")
+    @abstractmethod
+    def _extract_instantiation_from_node(self, node) -> Optional[dict]:
+        """Extract instantiation details from an AST node.
 
-                    if object_node and attribute_node:
-                        module_name = object_node.text.decode('utf-8')
-                        class_name = attribute_node.text.decode('utf-8')
-
-                        full_class_name = f"{module_name}.{class_name}"
-                        self.logger.log(self.__class__.__name__, f"DEBUG: Found attribute instantiation: {full_class_name}")
-
-                        # Find the containing context
-                        source_qname = self._find_containing_context(node, file_qname)
-
-                        if source_qname:
-                            # ⚠️  LAST RESORT: Find source symbol ID using reader
-                            source_symbols = reader.find_symbols(qname=source_qname, language=self.language)
-                            if source_symbols:
-                                source_symbol_id = source_symbols[0]['id']
-                                self.logger.log(self.__class__.__name__, f"DEBUG: Found source symbol id: {source_symbol_id}, creating unresolved relationship")
-                                # Create unresolved instantiation relationship
-                                writer.add_unresolved_relationship(
-                                    source_symbol_id=source_symbol_id,
-                                    source_qname=source_qname,
-                                    target_name=class_name,
-                                    rel_type="instantiates",
-                                    needs_type="declares_class",
-                                    target_qname=None,  # Will be resolved
-                                )
-                            else:
-                                self.logger.log(self.__class__.__name__, f"DEBUG: Source symbol not found: {source_qname}")
-
-    def _find_containing_context(self, node, file_qname: str):
+        Returns:
+            dict with keys:
+            - 'class_name': str - the name of the class being instantiated
+            Returns None if extraction fails.
         """
-        Find the containing context (function/method) for an instantiation.
+        pass
+
+    @abstractmethod
+    def _find_containing_context(self, node, file_qname: str) -> Optional[str]:
+        """Find the containing context (function/method) for an instantiation.
 
         Returns the qname of the containing function/method, or the file qname if at module level.
+        Returns None if context cannot be determined.
         """
-        current = node.parent
-        while current:
-            if current.type == "function_definition":
-                # Get function name
-                name_node = current.child_by_field_name("name")
-                if name_node:
-                    function_name = name_node.text.decode('utf-8')
-
-                    # Check if this is a method (inside a class) or module function
-                    class_name = None
-                    parent = current.parent
-                    while parent:
-                        if parent.type == "class_definition":
-                            class_name_node = parent.child_by_field_name("name")
-                            if class_name_node:
-                                class_name = class_name_node.text.decode('utf-8')
-                            break
-                        parent = parent.parent
-
-                    if class_name:
-                        return f"{class_name}.{function_name}"
-                    else:
-                        # Extract clean filename from file_qname (remove :__FILE__ suffix if present)
-                        clean_file_name = file_qname.replace(':__FILE__', '') if file_qname.endswith(':__FILE__') else file_qname
-                        return f"{clean_file_name}:{function_name}"
-
-            current = current.parent
-
-        # If no containing function found, return file qname
-        return file_qname
+        pass
 
     def resolve_immediate(self, writer: 'IndexWriter', reader: 'IndexReader'):
         """
@@ -171,8 +108,10 @@ class InstantiationRelationshipHandler(BaseRelationshipHandler):
         - Finding class symbols in the same file
         - Resolving through import relationships
         - Finding classes in imported modules
+
+        This logic is language-agnostic and reusable across languages.
         """
-        self.logger.log(self.__class__.__name__, "DEBUG: InstantiationRelationshipHandler.resolve_immediate called")
+        self.logger.log(self.__class__.__name__, "DEBUG: BaseInstantiationHandler.resolve_immediate called")
 
         # Query unresolved 'instantiates' relationships
         unresolved = reader.find_unresolved("instantiates")
@@ -211,6 +150,8 @@ class InstantiationRelationshipHandler(BaseRelationshipHandler):
     def _resolve_instantiation_target(self, rel, reader: 'IndexReader'):
         """
         Resolve the target of an instantiation relationship.
+
+        This is generic logic that works across languages.
 
         Args:
             rel: Unresolved relationship dict
@@ -254,8 +195,10 @@ class InstantiationRelationshipHandler(BaseRelationshipHandler):
         - Dynamic class resolution
         - Instantiations through complex expressions
         - Instantiations in conditional contexts
+
+        This logic is language-agnostic and reusable across languages.
         """
-        self.logger.log(self.__class__.__name__, "DEBUG: InstantiationRelationshipHandler.resolve_complex called")
+        self.logger.log(self.__class__.__name__, "DEBUG: BaseInstantiationHandler.resolve_complex called")
 
         # Query remaining unresolved 'instantiates' relationships
         unresolved = reader.find_unresolved("instantiates")
@@ -295,6 +238,8 @@ class InstantiationRelationshipHandler(BaseRelationshipHandler):
         """
         Resolve complex instantiation relationships using probabilistic approach.
         Embraces ambiguity by creating low-confidence relationships when certainty is impossible.
+
+        This is generic logic that works across languages.
 
         Args:
             rel: Unresolved relationship dict
@@ -350,6 +295,8 @@ class InstantiationRelationshipHandler(BaseRelationshipHandler):
         """
         Calculate confidence score for a potential instantiation target.
 
+        This is generic logic that works across languages.
+
         Args:
             rel: Unresolved relationship dict
             class_symbol: Potential target class symbol
@@ -383,6 +330,8 @@ class InstantiationRelationshipHandler(BaseRelationshipHandler):
     def _are_in_same_package(self, source_file: str, target_file: str):
         """
         Check if two files are in the same package/module.
+
+        This is generic logic that can be overridden by subclasses for language-specific package detection.
 
         Args:
             source_file: Source file path

@@ -1,4 +1,5 @@
-from typing import TYPE_CHECKING, Any
+from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
     from ..writer import IndexWriter
@@ -7,8 +8,40 @@ if TYPE_CHECKING:
 
 from ..base_relationship_handler import BaseRelationshipHandler
 
-class ImportRelationshipHandler(BaseRelationshipHandler):
-    """Handles import relationship resolution."""
+
+class BaseImportHandler(BaseRelationshipHandler, ABC):
+    """Abstract base class for import relationship handlers.
+
+    This class provides the reusable logic for import resolution that works
+    across multiple programming languages. Language-specific subclasses only
+    need to implement 3 abstract methods to handle their unique AST patterns.
+
+    ## Inheritance Pattern
+
+    To create a new language-specific import handler:
+
+    ```python
+    class MyLanguageImportHandler(BaseImportHandler):
+        def _get_import_queries(self) -> list[str]:
+            # Return tree-sitter queries for your language's import syntax
+            return ["(import_statement) @import"]
+
+        def _extract_import_from_node(self, node) -> Optional[dict]:
+            # Extract module name and imported symbols from AST node
+            # Return {'module_name': str, 'imported_names': list[str]}
+            pass
+
+        def _convert_module_to_file_path(self, module_name: str) -> str:
+            # Convert module name to file path using language-specific rules
+            pass
+    ```
+
+    The base class handles all the complex resolution logic including:
+    - Finding imported symbols through imports
+    - Resolving relative vs absolute imports
+    - Managing unresolved relationships
+    - Coordinating with the database
+    """
 
     relationship_type = "imports"
 
@@ -25,7 +58,7 @@ class ImportRelationshipHandler(BaseRelationshipHandler):
         This extracts import statements and creates unresolved relationships
         that will be resolved in Phase 2.
         """
-        self.logger.log(self.__class__.__name__, "DEBUG: ImportRelationshipHandler.extract_from_ast called")
+        self.logger.log(self.__class__.__name__, "DEBUG: BaseImportHandler.extract_from_ast called")
 
         # Get the file symbol ID for this file
         file_symbols = reader.find_symbols(qname=file_qname, language=self.language)
@@ -35,68 +68,73 @@ class ImportRelationshipHandler(BaseRelationshipHandler):
 
         file_symbol_id = file_symbols[0]['id']
 
-        # Query for from import statements
-        from_import_query = """
-            (import_from_statement) @from_import_stmt
-        """
+        # Get language-specific import queries
+        import_queries = self._get_import_queries()
 
-        # Extract from imports
-        query = self.language_obj.query(from_import_query)
-        captures = query.captures(tree.root_node)
+        # Extract imports using language-specific queries
+        for query_text in import_queries:
+            query = self.language_obj.query(query_text)
+            captures = query.captures(tree.root_node)
 
-        for capture in captures:
-            node = capture[0]
-            capture_name = capture[1]
+            for capture in captures:
+                node = capture[0]
+                capture_name = capture[1]
 
-            if capture_name == "from_import_stmt":
-                # Extract module name from relative_import
-                relative_import = node.child_by_field_name("module_name")
-                if relative_import:
-                    module_name = relative_import.text.decode('utf-8')
-                else:
-                    # Try relative_import for relative imports
-                    relative_import = node.child_by_field_name("relative_import")
-                    if relative_import:
-                        module_name = relative_import.text.decode('utf-8')
-                    else:
+                if capture_name == "from_import_stmt":
+                    # Extract import details using language-specific method
+                    import_details = self._extract_import_from_node(node)
+                    if not import_details:
                         continue
 
-                # Convert module name to file path (simplified for test cases)
-                if module_name.startswith('.'):
-                    # Relative import - convert to file path
-                    target_file = module_name.replace('.', '/') + '.py'
-                    if target_file.startswith('/'):
-                        target_file = target_file[1:]
-                else:
-                    target_file = module_name.replace('.', '/') + '.py'
+                    module_name = import_details['module_name']
+                    imported_names = import_details['imported_names']
 
-                # Extract all imported names
-                # Find all dotted_name nodes that are direct children of the import_from_statement
-                imported_names = []
-                for child in node.children:
-                    if child.type == "dotted_name":
-                        imported_names.append(child.text.decode('utf-8'))
+                    # Convert module name to file path using language-specific logic
+                    target_file = self._convert_module_to_file_path(module_name)
 
-                # Create unresolved import relationships for each imported symbol
-                for imported_name in imported_names:
-                    writer.add_unresolved_relationship(
-                        source_symbol_id=file_symbol_id,
-                        source_qname=file_qname,
-                        target_name=imported_name,
-                        rel_type="imports",
-                        needs_type="imports",
-                        target_qname=None,
-                        intermediate_symbol_qname=f"{target_file}:__FILE__"  # Hint about the source file
-                    )
-                    self.logger.log(self.__class__.__name__, f"DEBUG: Created unresolved import: {file_qname} -> {imported_name} from {target_file}")
+                    # Create unresolved import relationships for each imported symbol
+                    for imported_name in imported_names:
+                        writer.add_unresolved_relationship(
+                            source_symbol_id=file_symbol_id,
+                            source_qname=file_qname,
+                            target_name=imported_name,
+                            rel_type="imports",
+                            needs_type="imports",
+                            target_qname=None,
+                            intermediate_symbol_qname=f"{target_file}:__FILE__"  # Hint about the source file
+                        )
+                        self.logger.log(self.__class__.__name__, f"DEBUG: Created unresolved import: {file_qname} -> {imported_name} from {target_file}")
+
+    @abstractmethod
+    def _get_import_queries(self) -> list[str]:
+        """Return language-specific tree-sitter queries for import statements."""
+        pass
+
+    @abstractmethod
+    def _extract_import_from_node(self, node) -> Optional[dict]:
+        """Extract import details from an AST node.
+
+        Returns:
+            dict with keys:
+            - 'module_name': str - the module being imported from
+            - 'imported_names': list[str] - list of imported symbol names
+            Returns None if extraction fails.
+        """
+        pass
+
+    @abstractmethod
+    def _convert_module_to_file_path(self, module_name: str) -> str:
+        """Convert a module name to a file path using language-specific rules."""
+        pass
 
     def resolve_immediate(self, writer: 'IndexWriter', reader: 'IndexReader'):
         """
         Phase 2: Resolve import relationships that can be resolved immediately.
 
         Resolves import relationships by finding the imported symbols.
+        This logic is language-agnostic and reusable across languages.
         """
-        self.logger.log(self.__class__.__name__, "DEBUG: ImportRelationshipHandler.resolve_immediate called")
+        self.logger.log(self.__class__.__name__, "DEBUG: BaseImportHandler.resolve_immediate called")
 
         # Query unresolved 'imports' relationships
         unresolved = reader.find_unresolved("imports")
@@ -128,6 +166,8 @@ class ImportRelationshipHandler(BaseRelationshipHandler):
     def _resolve_import_target(self, target_name: str, intermediate_symbol_qname: str, reader: 'IndexReader'):
         """
         Resolve the target of an import relationship.
+
+        This is generic logic that works across languages.
 
         Args:
             target_name: The name of the symbol being imported
@@ -162,5 +202,6 @@ class ImportRelationshipHandler(BaseRelationshipHandler):
         Phase 3: Handle complex import resolution.
 
         For now, this is a no-op as most imports should be resolved in Phase 2.
+        This can be overridden by subclasses if needed for language-specific complex resolution.
         """
         pass

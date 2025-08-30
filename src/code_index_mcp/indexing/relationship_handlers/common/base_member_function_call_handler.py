@@ -1,4 +1,5 @@
-from typing import TYPE_CHECKING, Any
+from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
     from ..writer import IndexWriter
@@ -7,8 +8,13 @@ if TYPE_CHECKING:
 
 from ..base_relationship_handler import BaseRelationshipHandler
 
-class MemberFunctionCallRelationshipHandler(BaseRelationshipHandler):
-    """Handles class method call relationships (self.start(), obj.method())."""
+
+class BaseMemberFunctionCallHandler(BaseRelationshipHandler, ABC):
+    """Abstract base class for member function call relationship handlers.
+
+    This class contains the reusable logic for member function call resolution while
+    delegating language-specific AST parsing and queries to subclasses.
+    """
 
     relationship_type = "calls_class_method"
 
@@ -29,96 +35,45 @@ class MemberFunctionCallRelationshipHandler(BaseRelationshipHandler):
 
         Creates unresolved relationships for member function calls.
         """
-        from tree_sitter import Query
+        self.logger.log(self.__class__.__name__, "DEBUG: BaseMemberFunctionCallHandler.extract_from_ast called")
 
-        # Query for call where function is attribute access (member calls)
-        # This captures: self.start(), self.engine.start_engine(), obj.method()
-        member_calls_query = """
-            (call
-              function: (attribute) @function_attr
-            ) @call
-        """
+        # Get language-specific member function call queries
+        member_call_queries = self._get_member_call_queries()
 
-        query = self.language_obj.query(member_calls_query)
-        captures = query.captures(tree.root_node)
+        for query_text in member_call_queries:
+            query = self.language_obj.query(query_text)
+            captures = query.captures(tree.root_node)
 
-        # Group captures by node for easier processing
-        capture_groups = {}
-        for node, capture_name in captures:
-            if capture_name not in capture_groups:
-                capture_groups[capture_name] = []
-            capture_groups[capture_name].append(node)
+            # Group captures by node for easier processing
+            capture_groups = {}
+            for node, capture_name in captures:
+                if capture_name not in capture_groups:
+                    capture_groups[capture_name] = []
+                capture_groups[capture_name].append(node)
 
-        # Process each member call
-        call_nodes = capture_groups.get("call", [])
-        function_attr_nodes = capture_groups.get("function_attr", [])
+            # Process each member call
+            call_nodes = capture_groups.get("call", [])
+            function_attr_nodes = capture_groups.get("function_attr", [])
 
-        for i, call_node in enumerate(call_nodes):
-            if i >= len(function_attr_nodes):
-                continue
-
-            function_attr = function_attr_nodes[i]
-
-            # Extract the method name (the final attribute in the chain)
-            method_name = None
-            if function_attr.type == "attribute":
-                # Get the final attribute name
-                current = function_attr
-                while current.type == "attribute":
-                    if current.child_by_field_name("attribute"):
-                        current = current.child_by_field_name("attribute")
-                    else:
-                        break
-                if current.type == "identifier":
-                    method_name = current.text.decode('utf-8')
-
-            # Extract the full object path by getting the text of the object part
-            object_name = None
-            if function_attr.type == "attribute":
-                obj = function_attr.child_by_field_name("object")
-                if obj:
-                    # Get the full text of the object (handles nested attributes automatically)
-                    object_name = obj.text.decode('utf-8')
-
-            self.logger.log(self.__class__.__name__, f"DEBUG: Processing member call {i} - object: {object_name}, method: {method_name}")
-
-            if object_name and method_name:
-                # Find the containing class and method
-                class_name = None
-                calling_method_name = None
-                current = call_node.parent
-                while current:
-                    if current.type == "function_definition":
-                        # Get method name
-                        for child in current.children:
-                            if child.type == "identifier":
-                                calling_method_name = child.text.decode('utf-8')
-                                break
-                    elif current.type == "class_definition":
-                        # Get class name
-                        for child in current.children:
-                            if child.type == "identifier":
-                                class_name = child.text.decode('utf-8')
-                                break
-                        break
-                    current = current.parent
-
-                # Handle both class methods and standalone functions
-                if class_name and calling_method_name:
-                    # This is a class method
-                    source_qname = f"{class_name}.{calling_method_name}"
-                elif calling_method_name:
-                    # This is a standalone function (no class context)
-                    # Strip :__FILE__ suffix from file_qname if present
-                    base_file_qname = file_qname
-                    if base_file_qname.endswith(':__FILE__'):
-                        base_file_qname = base_file_qname.rsplit(':__FILE__', 1)[0]  # Remove ':__FILE__'
-                    source_qname = f"{base_file_qname}:{calling_method_name}"
-                else:
-                    self.logger.log(self.__class__.__name__, f"DEBUG: Could not determine source context for call")
+            for i, call_node in enumerate(call_nodes):
+                if i >= len(function_attr_nodes):
                     continue
 
-                self.logger.log(self.__class__.__name__, f"DEBUG: Looking for source symbol: {source_qname}")
+                function_attr = function_attr_nodes[i]
+
+                # Extract call details using language-specific method
+                call_details = self._extract_member_call_from_node(call_node, function_attr)
+                if not call_details:
+                    continue
+
+                method_name = call_details['method_name']
+                object_name = call_details['object_name']
+
+                # Construct source_qname from the extracted details
+                source_qname = self._construct_source_qname(call_details, file_qname)
+                if not source_qname:
+                    continue
+
                 # ⚠️  LAST RESORT: Find source symbol ID using reader
                 source_symbols = reader.find_symbols(qname=source_qname, language=self.language)
                 if source_symbols:
@@ -136,13 +91,62 @@ class MemberFunctionCallRelationshipHandler(BaseRelationshipHandler):
                 else:
                     self.logger.log(self.__class__.__name__, f"DEBUG: Source symbol not found: {source_qname}")
 
+    @abstractmethod
+    def _get_member_call_queries(self) -> list[str]:
+        """Return language-specific tree-sitter queries for finding member function calls."""
+        pass
+
+    @abstractmethod
+    def _extract_member_call_from_node(self, call_node, function_attr_node) -> Optional[dict]:
+        """Extract member function call details from AST nodes.
+
+        Returns:
+            dict with keys:
+            - 'method_name': str - the name of the method being called
+            - 'object_name': str - the object/variable being called on
+            - 'class_name': str - the class name if in a class method (optional)
+            - 'calling_method_name': str - the calling method name (optional)
+            Returns None if extraction fails.
+        """
+        pass
+
+    def _construct_source_qname(self, call_details: dict, file_qname: str) -> Optional[str]:
+        """
+        Construct the source qualified name from extracted call details.
+
+        Args:
+            call_details: Dict returned by _extract_member_call_from_node
+            file_qname: The qualified name of the file
+
+        Returns:
+            The source qualified name, or None if construction fails
+        """
+        class_name = call_details.get('class_name')
+        calling_method_name = call_details.get('calling_method_name')
+
+        if class_name and calling_method_name:
+            # This is a class method
+            return f"{class_name}.{calling_method_name}"
+        elif calling_method_name:
+            # This is a standalone function (no class context)
+            # Strip :__FILE__ suffix from file_qname if present
+            base_file_qname = file_qname
+            if base_file_qname.endswith(':__FILE__'):
+                base_file_qname = base_file_qname.rsplit(':__FILE__', 1)[0]  # Remove ':__FILE__'
+            return f"{base_file_qname}:{calling_method_name}"
+        else:
+            # Could not determine calling context
+            self.logger.log(self.__class__.__name__, f"DEBUG: Could not determine source context for call")
+            return None
+
     def resolve_immediate(self, writer: 'IndexWriter', reader: 'IndexReader'):
         """
         Phase 2: Resolve member function calls with current knowledge.
 
         Can resolve method calls within the same class and through inheritance.
+        This logic is language-agnostic and reusable across languages.
         """
-        self.logger.log(self.__class__.__name__, "DEBUG: MemberFunctionCallRelationshipHandler.resolve_immediate called")
+        self.logger.log(self.__class__.__name__, "DEBUG: BaseMemberFunctionCallHandler.resolve_immediate called")
         # Query unresolved 'calls_class_method' relationships
         unresolved = reader.find_unresolved("calls_class_method")
         self.logger.log(self.__class__.__name__, f"DEBUG: Found {len(unresolved)} unresolved calls_class_method relationships")
@@ -175,6 +179,8 @@ class MemberFunctionCallRelationshipHandler(BaseRelationshipHandler):
     def _find_method_with_inheritance(self, intermediate_qname: str, source_qname: str, reader: 'IndexReader'):
         """
         Find a method symbol, considering inheritance relationships.
+
+        This is generic logic that works across languages.
 
         Args:
             intermediate_qname: The qname to search for (e.g., "self.start", "self.engine.start_engine")
@@ -215,6 +221,8 @@ class MemberFunctionCallRelationshipHandler(BaseRelationshipHandler):
     def _find_self_method_with_inheritance(self, intermediate_qname: str, method_name: str, source_qname: str, reader: 'IndexReader'):
         """
         Find a self method call, considering inheritance and calling context.
+
+        This is generic logic that works across languages.
 
         Args:
             intermediate_qname: The full intermediate qname (e.g., "self.start")
@@ -279,6 +287,8 @@ class MemberFunctionCallRelationshipHandler(BaseRelationshipHandler):
         """
         Find a method call on an instance variable (e.g., self.engine.start_engine()).
 
+        This is generic logic that works across languages.
+
         Args:
             intermediate_qname: The full intermediate qname (e.g., "self.engine.start_engine")
             object_name: The object name (e.g., "self.engine")
@@ -327,6 +337,8 @@ class MemberFunctionCallRelationshipHandler(BaseRelationshipHandler):
     def _find_object_method(self, intermediate_qname: str, object_name: str, method_name: str, reader: 'IndexReader'):
         """
         Find an object method call.
+
+        This is generic logic that works across languages.
 
         Args:
             intermediate_qname: The full intermediate qname (e.g., "my_garage.service_car")
@@ -386,6 +398,8 @@ class MemberFunctionCallRelationshipHandler(BaseRelationshipHandler):
     def _resolve_variable_type(self, variable_name: str, reader: 'IndexReader'):
         """
         Resolve the type of a variable by looking at instantiation relationships.
+
+        This is generic logic that works across languages.
 
         Args:
             variable_name: The variable name (e.g., "my_garage")

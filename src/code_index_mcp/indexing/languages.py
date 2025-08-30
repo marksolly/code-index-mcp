@@ -24,23 +24,8 @@ class LanguageDefinition(ABC):
         """A list of relationship types supported by the language."""
         pass
 
-    @property
-    @abstractmethod
-    def uses_generic_handlers(self) -> List[str]:
-        """
-        A list of generic handler names that this language definition opts into.
-        Generic handlers listed here will be used for this language.
-        LanguageDefinition subclasses can override this method to change which
-        generic handlers they use.
-
-        Eg:
-            return [
-                "CallRelationshipHandler",
-                "InstantiationRelationshipHandler",
-                "InheritsRelationshipHandler",
-            ]
-        """
-        pass
+    # REMOVED: uses_generic_handlers property is no longer needed
+    # The orchestrator now discovers concrete handlers from language directories only
 
 class PythonLanguageDefinition(LanguageDefinition):
     @property
@@ -75,16 +60,7 @@ class PythonLanguageDefinition(LanguageDefinition):
             "declares_class",
         ]
 
-    @property
-    def uses_generic_handlers(self) -> List[str]:
-        return [
-            "ImportRelationshipHandler",
-            "InstantiationRelationshipHandler",
-            "InheritsRelationshipHandler",
-            "FileFunctionCallRelationshipHandler",
-            "MemberFunctionCallRelationshipHandler",
-            "IsInstanceOfRelationshipHandler",
-        ]
+
 
 
 class JavascriptLanguageDefinition(LanguageDefinition):
@@ -96,29 +72,27 @@ class JavascriptLanguageDefinition(LanguageDefinition):
     def supported_symbol_types(self) -> List[str]:
         return [
             "file",
-            "import",
-            "class",
             "function",
+            "class",
+            "method",
+            "constant",
             "variable",
-            "arrow_function",
+            "import",
+            "export",
         ]
 
     @property
     def supported_relationship_types(self) -> List[str]:
         return [
             "imports",
-            "references_variable",
-            "is_instance_of",
-            "declares_class",
-            "instantiates",
             "inherits",
+            "instantiates",
+            "is_instance_of",
             "declares_file_function",
             "declares_class_method",
-            "calls",
-        ]
-
-    @property
-    def uses_generic_handlers(self) -> List[str]:
-        return [
-            "CallRelationshipHandler",
+            "declares_class",
+            "declares_constant",
+            "calls_file_function",
+            "calls_class_method",
+            "references_variable",
         ]

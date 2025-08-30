@@ -1,4 +1,5 @@
-from typing import TYPE_CHECKING, Any
+from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
     from ..writer import IndexWriter
@@ -7,8 +8,13 @@ if TYPE_CHECKING:
 
 from ..base_relationship_handler import BaseRelationshipHandler
 
-class FileFunctionCallRelationshipHandler(BaseRelationshipHandler):
-    """Handles standalone function call relationships (helper_function() not self.helper_function())."""
+
+class BaseFileFunctionCallHandler(BaseRelationshipHandler, ABC):
+    """Abstract base class for file function call relationship handlers.
+
+    This class contains the reusable logic for standalone function call resolution while
+    delegating language-specific AST parsing and queries to subclasses.
+    """
 
     relationship_type = "calls_file_function"
     phase_dependencies = ["imports"]
@@ -30,87 +36,87 @@ class FileFunctionCallRelationshipHandler(BaseRelationshipHandler):
 
         Creates unresolved relationships for standalone function calls.
         """
-        from tree_sitter import Query
+        self.logger.log(self.__class__.__name__, "DEBUG: BaseFileFunctionCallHandler.extract_from_ast called")
 
-        # Query for standalone function calls (not attribute access)
-        # This captures: helper_function() but not self.helper_function() or obj.helper_function()
-        standalone_calls_query = """
-            (call
-              function: (identifier) @function_name
-            ) @call
+        # Get language-specific function call queries
+        function_call_queries = self._get_function_call_queries()
+
+        for query_text in function_call_queries:
+            query = self.language_obj.query(query_text)
+            captures = query.captures(tree.root_node)
+
+            # Group captures by node for easier processing
+            capture_groups = {}
+            for node, capture_name in captures:
+                if capture_name not in capture_groups:
+                    capture_groups[capture_name] = []
+                capture_groups[capture_name].append(node)
+
+            # Process each standalone call
+            call_nodes = capture_groups.get("call", [])
+            function_nodes = capture_groups.get("function_name", [])
+
+            for i, call_node in enumerate(call_nodes):
+                function_name = None
+
+                # Get the corresponding function name for this call
+                if i < len(function_nodes):
+                    function_name = function_nodes[i].text.decode('utf-8')
+
+                self.logger.log(self.__class__.__name__, f"DEBUG: Processing standalone call {i} - function: {function_name}")
+
+                if function_name:
+                    # Extract call details using language-specific method
+                    call_details = self._extract_function_from_node(call_node, function_name)
+                    if not call_details:
+                        continue
+
+                    function_name = call_details['function_name']
+                    source_qname = call_details['source_qname']
+
+                    if source_qname:
+                        # ⚠️  LAST RESORT: Find source symbol ID using reader
+                        source_symbols = reader.find_symbols(qname=source_qname, language=self.language)
+                        if source_symbols:
+                            source_symbol_id = source_symbols[0]['id']
+                            self.logger.log(self.__class__.__name__, f"DEBUG: Found source symbol id: {source_symbol_id}, creating unresolved relationship")
+                            writer.add_unresolved_relationship(
+                                source_symbol_id=source_symbol_id,
+                                source_qname=source_qname,
+                                target_name=function_name,
+                                rel_type="calls_file_function",
+                                needs_type="declares_file_function",
+                                target_qname=None,
+                                intermediate_symbol_qname=function_name  # Store just the function name for resolution
+                            )
+                        else:
+                            self.logger.log(self.__class__.__name__, f"DEBUG: Source symbol not found: {source_qname}")
+
+    @abstractmethod
+    def _get_function_call_queries(self) -> list[str]:
+        """Return language-specific tree-sitter queries for finding standalone function calls."""
+        pass
+
+    @abstractmethod
+    def _extract_function_from_node(self, node, function_name: str) -> Optional[dict]:
+        """Extract function call details from an AST node.
+
+        Returns:
+            dict with keys:
+            - 'function_name': str - the name of the function being called
+            - 'source_qname': str - the qualified name of the calling method/class.method
+            Returns None if extraction fails.
         """
-
-        query = self.language_obj.query(standalone_calls_query)
-        captures = query.captures(tree.root_node)
-
-        # Group captures by node for easier processing
-        capture_groups = {}
-        for node, capture_name in captures:
-            if capture_name not in capture_groups:
-                capture_groups[capture_name] = []
-            capture_groups[capture_name].append(node)
-
-        # Process each standalone call
-        call_nodes = capture_groups.get("call", [])
-        function_nodes = capture_groups.get("function_name", [])
-
-        for i, call_node in enumerate(call_nodes):
-            function_name = None
-
-            # Get the corresponding function name for this call
-            if i < len(function_nodes):
-                function_name = function_nodes[i].text.decode('utf-8')
-
-            self.logger.log(self.__class__.__name__, f"DEBUG: Processing standalone call {i} - function: {function_name}")
-
-            if function_name:
-                # Find the containing class and method
-                class_name = None
-                calling_method_name = None
-                current = call_node.parent
-                while current:
-                    if current.type == "function_definition":
-                        # Get method name
-                        for child in current.children:
-                            if child.type == "identifier":
-                                calling_method_name = child.text.decode('utf-8')
-                                break
-                    elif current.type == "class_definition":
-                        # Get class name
-                        for child in current.children:
-                            if child.type == "identifier":
-                                class_name = child.text.decode('utf-8')
-                                break
-                        break
-                    current = current.parent
-
-                if class_name and calling_method_name:
-                    source_qname = f"{class_name}.{calling_method_name}"
-                    self.logger.log(self.__class__.__name__, f"DEBUG: Looking for source symbol: {source_qname}")
-                    # ⚠️  LAST RESORT: Find source symbol ID using reader
-                    source_symbols = reader.find_symbols(qname=source_qname, language=self.language)
-                    if source_symbols:
-                        source_symbol_id = source_symbols[0]['id']
-                        self.logger.log(self.__class__.__name__, f"DEBUG: Found source symbol id: {source_symbol_id}, creating unresolved relationship")
-                        writer.add_unresolved_relationship(
-                            source_symbol_id=source_symbol_id,
-                            source_qname=source_qname,
-                            target_name=function_name,
-                            rel_type="calls_file_function",
-                            needs_type="declares_file_function",
-                            target_qname=None,
-                            intermediate_symbol_qname=function_name  # Store just the function name for resolution
-                        )
-                    else:
-                        self.logger.log(self.__class__.__name__, f"DEBUG: Source symbol not found: {source_qname}")
+        pass
 
     def resolve_immediate(self, writer: 'IndexWriter', reader: 'IndexReader'):
         """
         Phase 2: Resolve standalone function calls using import relationships.
 
         Can resolve function calls that are imported from other files.
+        This logic is language-agnostic and reusable across languages.
         """
-        self.logger.log(self.__class__.__name__, "DEBUG: FileFunctionCallRelationshipHandler.resolve_immediate called")
+        self.logger.log(self.__class__.__name__, "DEBUG: BaseFileFunctionCallHandler.resolve_immediate called")
         # Query unresolved 'calls_file_function' relationships
         unresolved = reader.find_unresolved("calls_file_function")
         self.logger.log(self.__class__.__name__, f"DEBUG: Found {len(unresolved)} unresolved calls_file_function relationships")
@@ -143,6 +149,8 @@ class FileFunctionCallRelationshipHandler(BaseRelationshipHandler):
     def _find_function_through_imports(self, function_name: str, source_qname: str, reader: 'IndexReader'):
         """
         Find a function symbol by checking import relationships.
+
+        This is generic logic that works across languages.
 
         Args:
             function_name: The function name being called (e.g., "helper_function")

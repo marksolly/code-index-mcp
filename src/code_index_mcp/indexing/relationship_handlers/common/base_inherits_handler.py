@@ -1,3 +1,4 @@
+from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -7,8 +8,41 @@ if TYPE_CHECKING:
 
 from ..base_relationship_handler import BaseRelationshipHandler
 
-class InheritsRelationshipHandler(BaseRelationshipHandler):
-    """Handles inheritance relationship resolution."""
+
+class BaseInheritsHandler(BaseRelationshipHandler, ABC):
+    """Abstract base class for inheritance relationship handlers.
+
+    This class provides the reusable logic for inheritance resolution that works
+    across multiple programming languages. Most inheritance logic is language-agnostic,
+    so subclasses typically only need to implement 1 abstract method.
+
+    ## Inheritance Pattern
+
+    To create a new language-specific inheritance handler:
+
+    ```python
+    class MyLanguageInheritsHandler(BaseInheritsHandler):
+        def _get_inheritance_symbol_types(self) -> list[str]:
+            # Return symbol types that can be inherited in your language
+            return ['class', 'interface']  # For languages with interfaces
+            # or return ['class']  # For Python-style single inheritance
+    ```
+
+    The base class handles all the complex resolution logic including:
+    - Finding parent classes through imports
+    - Resolving inheritance chains
+    - Managing unresolved relationships
+    - Coordinating with the database
+
+    ## Why Minimal Abstract Methods?
+
+    Inheritance resolution is mostly language-agnostic because:
+    - Most languages resolve inheritance by finding symbols by name
+    - Import resolution works the same way across languages
+    - The core algorithm of "find parent class" is universal
+
+    The only language-specific part is knowing which symbol types can be inherited.
+    """
 
     relationship_type = "inherits"
 
@@ -27,7 +61,8 @@ class InheritsRelationshipHandler(BaseRelationshipHandler):
            - Avoid complex lookups or relationship queries
            - Defer all resolution logic to Phase 2
 
-        This is handled by the symbol extractor, not here.
+        This is typically handled by the symbol extractor, not here.
+        Subclasses can override if language-specific AST extraction is needed.
         """
         pass
 
@@ -37,8 +72,9 @@ class InheritsRelationshipHandler(BaseRelationshipHandler):
 
         Resolves inheritance relationships by looking for imported symbols or
         symbols declared in the same file.
+        This logic is language-agnostic and reusable across languages.
         """
-        self.logger.log(self.__class__.__name__, "DEBUG: InheritsRelationshipHandler.resolve_immediate called")
+        self.logger.log(self.__class__.__name__, "DEBUG: BaseInheritsHandler.resolve_immediate called")
 
         # Query unresolved 'inherits' relationships
         unresolved = reader.find_unresolved("inherits")
@@ -69,6 +105,8 @@ class InheritsRelationshipHandler(BaseRelationshipHandler):
     def _resolve_inheritance_target(self, target_name: str, reader: 'IndexReader'):
         """
         Resolve the target of an inheritance relationship.
+
+        This is generic logic that works across languages.
 
         Args:
             target_name: The name of the class being inherited from
@@ -106,5 +144,15 @@ class InheritsRelationshipHandler(BaseRelationshipHandler):
         Phase 3: Handle complex inheritance resolution.
 
         For now, this is a no-op as most inheritance should be resolved in Phase 2.
+        Subclasses can override for language-specific complex resolution strategies.
+        """
+        pass
+
+    @abstractmethod
+    def _get_inheritance_symbol_types(self) -> list[str]:
+        """Return the symbol types that represent inheritable constructs in this language.
+
+        Returns:
+            List of symbol types (e.g., ['class'] for Python, ['class', 'interface'] for others)
         """
         pass

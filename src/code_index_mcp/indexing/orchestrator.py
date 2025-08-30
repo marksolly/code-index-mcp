@@ -194,14 +194,8 @@ class IndexingOrchestrator:
         """Discover relationship handlers for a language using self-describing handlers."""
         handlers = {}
 
-        # Get language definition to see which generic handlers to use
-        language_definition = self._get_language_definition(language)
-        generic_handlers_to_use = getattr(language_definition, 'uses_generic_handlers', [])
-
-        # Discover generic handlers
-        self._discover_handlers("common", handlers, filter_by=generic_handlers_to_use)
-
-        # Discover language-specific handlers (these override generic ones)
+        # Discover language-specific handlers from language directories
+        # Each language directory contains concrete implementations
         self._discover_handlers(language, handlers)
 
         return handlers
