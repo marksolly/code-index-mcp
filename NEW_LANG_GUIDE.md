@@ -83,7 +83,6 @@ LanguageDefinition:
   description: "A configuration class that defines the properties of a language."
   responsibilities:
     - "Specifies supported symbol and relationship types."
-    - "Opts into which GenericRelationshipHandlers to use."
   used_by:
     - IndexingOrchestrator
 
@@ -104,13 +103,12 @@ YourRelationshipHandler (inherits from BaseRelationshipHandler):
   self_describing:
     - "Declares its relationship_type, required_symbol_types, and phase_dependencies."
 
-GenericRelationshipHandler (inherits from BaseRelationshipHandler):
-  description: "A reusable handler for a common relationship type (e.g., 'inherits')."
-  note: "You should always prefer using a generic handler over writing a new one."
+BaseRelationshipHandler:
+  description: "Abstract base class providing reusable relationship resolution logic."
   inheritance_model:
-    - "YourLanguageDefinition opts into a generic handler."
-    - "The Orchestrator discovers and uses the generic handler for your language."
-    - "You can override it by creating a language-specific handler for the same relationship type."
+    - "Each relationship type has a BaseRelationshipHandler in common/ (e.g., BaseImportHandler)."
+    - "Language-specific handlers inherit from these base classes (e.g., PythonImportHandler)."
+    - "Base classes contain 80-90% of the logic; subclasses implement 3-5 abstract methods."
 ```
 ---
 
@@ -123,11 +121,11 @@ Once you have confirmed your approach is compatible with the schema, you must de
 -   **Location**: `src/code_index_mcp/indexing/languages.py`
 -   **Action**: Create a new class that inherits from `LanguageDefinition` and implement the abstract properties.
 
-### The Power of Generic Analyzers
+### The Power of The Base Relationship Handler Classes
 
-The indexing pipeline includes a suite of generic analyzers that can handle common language features out of the box. By opting into these, you can often get a significant portion of your language support working with minimal effort.
+The indexing pipeline uses a an inheritance-based architecture where each relationship type has a base class with reusable logic. Language-specific subclasses only need to implement 3-5 abstract methods to handle their unique AST patterns. Optionally, they can create their own custom implementation instead.
 
-**Your first step should always be to enable the relevant generic analyzers.**
+**Your first step should always be to create language-specific subclasses from the base classes.**
 
 ### Example: `GoLanguageDefinition`
 
@@ -160,20 +158,11 @@ class GoLanguageDefinition(LanguageDefinition):
             "is_instance_of",
             "inherits",
         ]
-
-    @property
-    def uses_generic_handlers(self) -> List[str]:
-        return [
-            "ImportRelationshipHandler",
-            "InstantiationRelationshipHandler",
-            "InheritsRelationshipHandler",
-            "CallRelationshipHandler",
-        ]
 ```
 
 ### Why is this important?
 
-By defining your language and opting into generic analyzers from the start, you leverage the existing infrastructure to do the heavy lifting. This allows you to focus on the unique aspects of your language, rather than reinventing the wheel for common features like imports, inheritance, and instantiations.
+The base classes provide 80-90% of the relationship resolution logic. You only need to implement language-specific AST parsing methods. This dramatically reduces the amount of code you need to write while ensuring consistency and maintainability.
 
 ## Step 2: Create the Test Environment
 
@@ -366,17 +355,28 @@ Your extractor runs `tree-sitter` queries to find symbol declarations.
 
 After you have a working `SymbolExtractor`, you can start implementing `RelationshipHandler` classes. These are responsible for managing the complete lifecycle of specific relationship types across all phases.
 
-### Leveraging Generic Handlers
+### Leveraging Base Classes and Inheritance
 
-Before writing a new handler, check the `src/code_index_mcp/indexing/relationship_handlers/common/` directory. This directory contains a growing library of generic, reusable handlers for common relationship types (e.g., `instantiates`, `inherits`, `calls`).
+Before writing a new handler, check the `src/code_index_mcp/indexing/relationship_handlers/common/` directory. This directory contains **abstract base classes** (not concrete handlers) that provide reusable logic for common relationship types.
 
-**You should always prefer using a generic handler over writing a new one.** Only create a language-specific handler if the language has unique semantics that the generic implementation cannot handle.
+**You should strive to inherit from a base class rather than writing a handler from scratch.** The base classes contain 80-90% of the relationship resolution logic, so you only need to implement 3-5 abstract methods for language-specific AST parsing.
 
-Handlers must be registered in `languages.py`. 
+-   **Location**: `src/code_index_mcp/indexing/relationship_handlers/{language}/`
+-   **Naming**: `{Language}{RelationshipType}Handler` (e.g., `GoImportHandler`, `JavaScriptCallHandler`)
+-   **Principle**: One class, one relationship type per language
+-   **Self-Describing**: Handlers declare their `relationship_type`, `required_symbol_types`, and `phase_dependencies`
+-   **Unified Lifecycle**: Each handler manages extraction (Phase 1), immediate resolution (Phase 2), and complex resolution (Phase 3)
 
--   **Principle**: One class, one relationship type. A `CallRelationshipHandler` manages all call relationships, while an `ImportRelationshipHandler` manages all import relationships.
--   **Self-Describing**: Handlers declare their `relationship_type`, `required_symbol_types`, and `phase_dependencies`.
--   **Unified Lifecycle**: Each handler manages extraction (Phase 1), immediate resolution (Phase 2), and second order resolution (Phase 3).
+### Available Base Classes
+
+The `common/` directory contains these abstract base classes:
+
+- `BaseImportHandler` - For import relationship resolution
+- `BaseInheritsHandler` - For inheritance relationship resolution
+- `BaseInstantiationHandler` - For class instantiation resolution
+- `BaseFileFunctionCallHandler` - For file-level function call resolution
+- `BaseMemberFunctionCallHandler` - For method/member call resolution
+- `BaseIsInstanceOfHandler` - For type/instance relationship resolution
 
 ### A Note on Pragmatism and Creative Solutions
 
@@ -385,17 +385,15 @@ The goal of the indexer is to provide a "good enough" overview of a codebase, no
 -   **Focus on High-Signal Symbols**: When implementing features like variable tracking, prioritize "high-signal" symbols (e.g., module-level exports, constants) over indexing every local variable. This reduces noise and complexity.
 -   **Work Within Constraints**: Before proposing new relationship types, consider if you can creatively repurpose existing, supported types to achieve your goal. For example, using an `is_instance_of` relationship to represent a class alias is a pragmatic way to solve a language-specific problem without requiring schema changes. This embraces the "fail-soft" philosophy of the indexer.
 
-### The Fallback Mechanism and Confidence Scoring
+### The Inheritance Mechanism and Confidence Scoring
 
-You don't have to write a language-specific handler for every relationship type. You can register one of the generic handlers if it is suitable.
+The orchestrator automatically discovers language-specific handlers from the `{language}/` directories. For each relationship type in your language definition:
 
-1.  The orchestrator looks for `GoCallRelationshipHandler`.
-2.  If not found, it looks for `CallRelationshipHandler` in the `common/` directory.
-3.  If neither is found, the relationship is skipped for Go.
+1. The orchestrator looks for `{Language}{RelationshipType}Handler` in the `{language}/` directory
+2. If found, it instantiates and uses your language-specific implementation
+3. If not found, the relationship type is skipped for your language
 
-You only need to create `go/call_relationship_handler.py` if you need to **override or specialize** the generic logic.
-
-**Improving Generic Handlers**: If you find a flaw in a generic handler, it's better to improve the generic implementation than to create a language-specific workaround. This benefits all languages that use the generic handler.
+**Custom Implementations**: If a base class doesn't meet your needs, you can create a completely custom handler by inheriting directly from `BaseRelationshipHandler`. However, this should be rare since the base classes are designed to be highly reusable.
 
 **Confidence Scoring**: The `IndexWriter.add_relationship` method supports a `confidence` parameter (a float between 0.0 and 1.0). This is useful for handling ambiguity. If a handler cannot uniquely identify a target symbol, it can create multiple low-confidence relationships. For example, if there are three possible target symbols, the handler could create three relationships, each with a confidence of `1/3`. This is a key part of the indexer's "fail-soft" philosophy.
 
@@ -433,15 +431,15 @@ A plan must include these sections:
         Define which relationship types must be resolved before others using the `relationship_dependencies` property.
         The test suite automatically sorts tests based on these dependencies to ensure correct execution order. This will also help guide your phase 2 and phase 3 design.
         Example: `'calls': ['imports', 'declares_class']`
-    4. List of Generic Handler classes to be used and rationale for using each.
-        Check `src/code_index_mcp/indexing/relationship_handlers/common/` for available generic handlers.
-        Example: `CallRelationshipHandler` for handling function/method calls.
-    5. List of Unsuitable Generic Handler classes.
-        Make sure you say why a generic handler is not suitable. Identifying the deficiency will give insight into the work to be done.
-        Example: `GenericCallHandler` doesn't handle language-specific call syntax.
+    4. List of Base Classes to inherit from and rationale for using each.
+        Check `src/code_index_mcp/indexing/relationship_handlers/common/` for available base classes.
+        Example: `BaseImportHandler` for handling import relationships (provides 80-90% of logic).
+    5. List of Base Classes that may not be suitable.
+        Make sure you say why a base class is not suitable. Identifying the deficiency will help determine if you need a custom implementation.
+        Example: `BaseImportHandler` doesn't handle language-specific import syntax patterns.
     6. List of proposed new Handler classes.
         Specify which relationship types need custom handlers and why.
-        Example: `GoCallRelationshipHandler` for Go-specific call patterns.
+        Example: `GoImportHandler` inheriting from `BaseImportHandler` for Go-specific import patterns.
     7. List of relevant files for context, including which files from other languages will be used as examples.
         Example: Look at `python_symbol_extractor.py` for symbol extraction patterns.
     8. List of unknowns and assumptions.
@@ -450,7 +448,6 @@ A plan must include these sections:
         Include specific tasks like:
         - [ ] Create language definition in `languages.py`
         - [ ] Implement symbol extractor
-        - [ ] Register generic handlers
-        - [ ] Create language-specific handlers (if needed)
+        - [ ] Create language-specific handlers inheriting from base classes
         - [ ] Update tests
         - [ ] Validate with test suite (iteratively)
