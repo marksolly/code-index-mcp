@@ -1,5 +1,10 @@
 # Code Scope MCP
 
+## WORK IN PROGRESS
+This project is not in a running state yet.
+
+The descriptions below are a vision statement.
+
 <div align="center">
 
 [![MCP Server](https://img.shields.io/badge/MCP-Server-blue)](https://modelcontextprotocol.io)
