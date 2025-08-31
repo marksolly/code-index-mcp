@@ -199,6 +199,52 @@ class JavascriptFunctionExtractor:
                             target_qname=function_qname,
                         )
 
+        # Also handle exported arrow functions (lexical_declaration with arrow function)
+        arrow_function_query = """
+            (lexical_declaration
+                (variable_declarator
+                    name: (identifier) @name
+                    value: (arrow_function))) @arrow_func
+        """
+
+        query = context.language_obj.query(arrow_function_query)
+        captures = query.captures(context.tree.root_node)
+
+        for capture in captures:
+            node = capture[0]
+            capture_name = capture[1]
+
+            if capture_name == "arrow_func":
+                # Get the variable name
+                name_nodes = [child for child in node.children if child.type == "variable_declarator"]
+                for var_node in name_nodes:
+                    name_node = var_node.child_by_field_name("name")
+                    if name_node:
+                        name = name_node.text.decode('utf-8')
+
+                        # Create function symbol for arrow function
+                        function_qname = f"{context.file_name}:{name}"
+                        symbol = Symbol(
+                            name=name,
+                            qname=function_qname,
+                            symbol_type="function",
+                            file_path=context.file_symbol.file_path,
+                            line_number=node.start_point[0] + 1,
+                            language="javascript",
+                            file_id=context.file_symbol.file_id,
+                        )
+                        context.writer.add_symbol(symbol)
+                        symbols.append(symbol)
+
+                        # Create declares_file_function relationship
+                        context.writer.add_relationship(
+                            source_symbol_id=context.file_symbol.id,
+                            target_symbol_id=symbol.id,
+                            rel_type="declares_file_function",
+                            source_qname=context.file_qname,
+                            target_qname=function_qname,
+                        )
+
         return symbols
 
 class JavascriptConstantExtractor:
@@ -273,40 +319,10 @@ class JavascriptImportExtractor:
     """Handles import statements"""
 
     def extract_symbols(self, context: SymbolExtractionContext) -> List[Symbol]:
-        """Extract import symbols and create unresolved import relationships"""
-        from tree_sitter import Query
-
-        symbols = []
-
-        # Query for import_statement nodes
-        import_query = """
-            (import_statement) @import
-        """
-
-        query = context.language_obj.query(import_query)
-        captures = query.captures(context.tree.root_node)
-
-        for capture in captures:
-            node = capture[0]
-            capture_name = capture[1]
-
-            if capture_name == "import":
-                # Get the source file path
-                source_node = node.child_by_field_name("source")
-                if source_node:
-                    source_path = source_node.text.decode('utf-8').strip('"\'')
-
-                    # Create unresolved import relationship
-                    context.writer.add_unresolved_relationship(
-                        source_symbol_id=context.file_symbol.id,
-                        source_qname=context.file_qname,
-                        target_name=source_path,
-                        rel_type="imports",
-                        needs_type=None,  # Imports are foundational, no dependencies
-                        target_qname=f"{source_path}:__FILE__",
-                    )
-
-        return symbols
+        """Extract import symbols - import relationships are handled by relationship handlers in Phase 2"""
+        # Import relationships are handled by relationship handlers in Phase 2, not during symbol extraction
+        # This follows the same pattern as the Python implementation
+        return []
 
 class JavascriptSymbolExtractor(BaseSymbolExtractor):
     """Composed symbol extractor using focused sub-extractors"""

@@ -403,6 +403,13 @@ Attention: Claude, Cline, Cursor, Grok, Gemini & others.
 
 Working with this codebase requires having "the big picture" and using all the component classes together correctly. To operate effectively you also need a well defined plan because implementing a new language will exceed context length and contains too many details to execute in a single session.
 
+### Executing Python Scripts
+
+This project uses a virtual environment which can be activated with:
+`source /<...full path...>/code-index-mcp/.venv/bin/activate`
+
+This project uses `uv`. Any scripts you run must be invoked with `uv run`.
+
 ### Discovery
 In the first instance, use code-scope-mcp `find_symbols` tool for discovery (if available). When applicable files have been identified, agents and assistants are recommended to perform a bulk read before planning or beginning any task. Eg:
 `rg --files <file_or_folder1> <file_or_folder2> [<file_or_folder3>...]  | xargs -I {} sh -c 'echo "--- {} ---"; cat {}; echo'`

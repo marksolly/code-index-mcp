@@ -351,6 +351,10 @@ class BaseMemberFunctionCallHandler(BaseRelationshipHandler, ABC):
         """
         self.logger.log(self.__class__.__name__, f"DEBUG: Looking for object method '{object_name}.{method_name}'")
 
+        # Handle 'this' method calls specially - these should prioritize the current class
+        if object_name == "this":
+            return self._find_this_method(method_name, reader)
+
         # Try to resolve the variable type through instantiation relationships
         variable_type = self._resolve_variable_type(object_name, reader)
         if variable_type:
@@ -390,6 +394,37 @@ class BaseMemberFunctionCallHandler(BaseRelationshipHandler, ABC):
         if method_symbols:
             self.logger.log(self.__class__.__name__, f"DEBUG: Found {len(method_symbols)} methods with name '{method_name}', picking first")
             # For now, return the first one found
+            return method_symbols[0]
+        else:
+            self.logger.log(self.__class__.__name__, f"DEBUG: No methods found with name '{method_name}'")
+            return None
+
+    def _find_this_method(self, method_name: str, reader: 'IndexReader'):
+        """
+        Find a method call on 'this' object, prioritizing methods in the current class context.
+
+        This method should be called from subclasses with proper context information.
+        For now, this is a simplified implementation that just finds any method with the name.
+
+        Args:
+            method_name: The method name (e.g., "get_identifier")
+            reader: IndexReader instance
+
+        Returns:
+            Symbol dict if found, None otherwise
+        """
+        self.logger.log(self.__class__.__name__, f"DEBUG: Looking for 'this.{method_name}' method")
+
+        # For 'this' method calls, we need context about which class we're in
+        # This is a limitation of the current base class design
+        # Subclasses should override this method with proper context awareness
+
+        # Fallback: find any method with this name
+        method_symbols = reader.find_symbols(name=method_name, language=self.language)
+        method_symbols = [s for s in method_symbols if s['symbol_type'] == 'method']
+
+        if method_symbols:
+            self.logger.log(self.__class__.__name__, f"DEBUG: Found {len(method_symbols)} methods with name '{method_name}', picking first")
             return method_symbols[0]
         else:
             self.logger.log(self.__class__.__name__, f"DEBUG: No methods found with name '{method_name}'")
