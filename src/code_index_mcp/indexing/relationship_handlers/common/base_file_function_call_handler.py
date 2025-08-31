@@ -160,9 +160,6 @@ class BaseFileFunctionCallHandler(BaseRelationshipHandler, ABC):
         Returns:
             Symbol dict if found, None otherwise
         """
-        # Temporarily disable log filtering to see debug output
-        original_filters = getattr(self.logger, 'filters', {})
-        self.logger.filters = {}
 
         self.logger.log(self.__class__.__name__, f"DEBUG: _find_function_through_imports called with function_name='{function_name}', source_qname='{source_qname}'")
 

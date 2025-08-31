@@ -81,14 +81,7 @@ class JavascriptImportHandler(BaseImportHandler):
                         if name_node:
                             imported_names.append(name_node.text.decode('utf-8'))
 
-            # Temporarily disable filters to ensure debug message shows
-            original_filters = self.logger.filters
-            self.logger.filters = {}
-
             self.logger.log(self.__class__.__name__, f"DEBUG: Extracted import: {module_name} -> {imported_names}")
-
-            # Restore original filters
-            self.logger.filters = original_filters
 
             return {
                 'module_name': module_name,
