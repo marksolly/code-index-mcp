@@ -147,8 +147,8 @@ class BaseMemberFunctionCallHandler(BaseRelationshipHandler, ABC):
         This logic is language-agnostic and reusable across languages.
         """
         self.logger.log(self.__class__.__name__, "DEBUG: BaseMemberFunctionCallHandler.resolve_immediate called")
-        # Query unresolved 'calls_class_method' relationships
-        unresolved = reader.find_unresolved("calls_class_method")
+        # Query unresolved 'calls_class_method' relationships for this language only
+        unresolved = reader.find_unresolved("calls_class_method", language=self.language)
         self.logger.log(self.__class__.__name__, f"DEBUG: Found {len(unresolved)} unresolved calls_class_method relationships")
 
         for rel in unresolved:

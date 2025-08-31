@@ -76,8 +76,8 @@ class BaseInheritsHandler(BaseRelationshipHandler, ABC):
         """
         self.logger.log(self.__class__.__name__, "DEBUG: BaseInheritsHandler.resolve_immediate called")
 
-        # Query unresolved 'inherits' relationships
-        unresolved = reader.find_unresolved("inherits")
+        # Query unresolved 'inherits' relationships for this language only
+        unresolved = reader.find_unresolved("inherits", language=self.language)
         self.logger.log(self.__class__.__name__, f"DEBUG: Found {len(unresolved)} unresolved inherits relationships")
 
         for rel in unresolved:

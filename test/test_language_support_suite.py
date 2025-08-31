@@ -270,12 +270,15 @@ def main():
 
     # Load the test suite and validate passed_tests.json contents
     print("--- Loading test suite and validating passed_tests.json ---")
-    TestLanguageSupportSuite.language_to_test = args.language  # Respect language filter
-    full_suite = unittest.TestLoader().loadTestsFromModule(sys.modules[__name__])
+    # Load all tests for validation, regardless of language filter
+    original_language = TestLanguageSupportSuite.language_to_test
+    TestLanguageSupportSuite.language_to_test = None
+    full_suite_for_validation = unittest.TestLoader().loadTestsFromModule(sys.modules[__name__])
+    TestLanguageSupportSuite.language_to_test = original_language
 
     # Validate passed_tests.json contents against current test suite
-    all_tests = get_all_tests(full_suite)
-    all_test_ids = {test.id() for test in all_tests}
+    all_tests_for_validation = get_all_tests(full_suite_for_validation)
+    all_test_ids = {test.id() for test in all_tests_for_validation}
 
     invalid_tests = []
     for test_id in passed_tests_set:
@@ -301,6 +304,10 @@ def main():
         sys.exit(1)
     else:
         print(f"✅ All {len(passed_tests_set)} entries in passed_tests.json are valid test names")
+
+    # Reload test suite with language filter applied for dump-plan and execution
+    full_suite = unittest.TestLoader().loadTestsFromModule(sys.modules[__name__])
+    all_tests = get_all_tests(full_suite)
 
     # If dump-plan flag is set, just show the test plan and exit
     if args.dump_plan:

@@ -113,8 +113,8 @@ class BaseInstantiationHandler(BaseRelationshipHandler, ABC):
         """
         self.logger.log(self.__class__.__name__, "DEBUG: BaseInstantiationHandler.resolve_immediate called")
 
-        # Query unresolved 'instantiates' relationships
-        unresolved = reader.find_unresolved("instantiates")
+        # Query unresolved 'instantiates' relationships for this language only
+        unresolved = reader.find_unresolved("instantiates", language=self.language)
         self.logger.log(self.__class__.__name__, f"DEBUG: Found {len(unresolved)} unresolved instantiates relationships")
 
         for rel in unresolved:
@@ -200,8 +200,8 @@ class BaseInstantiationHandler(BaseRelationshipHandler, ABC):
         """
         self.logger.log(self.__class__.__name__, "DEBUG: BaseInstantiationHandler.resolve_complex called")
 
-        # Query remaining unresolved 'instantiates' relationships
-        unresolved = reader.find_unresolved("instantiates")
+        # Query remaining unresolved 'instantiates' relationships for this language only
+        unresolved = reader.find_unresolved("instantiates", language=self.language)
         self.logger.log(self.__class__.__name__, f"DEBUG: Found {len(unresolved)} unresolved instantiates for complex resolution")
 
         for rel in unresolved:

@@ -117,8 +117,8 @@ class BaseFileFunctionCallHandler(BaseRelationshipHandler, ABC):
         This logic is language-agnostic and reusable across languages.
         """
         self.logger.log(self.__class__.__name__, "DEBUG: BaseFileFunctionCallHandler.resolve_immediate called")
-        # Query unresolved 'calls_file_function' relationships
-        unresolved = reader.find_unresolved("calls_file_function")
+        # Query unresolved 'calls_file_function' relationships for this language only
+        unresolved = reader.find_unresolved("calls_file_function", language=self.language)
         self.logger.log(self.__class__.__name__, f"DEBUG: Found {len(unresolved)} unresolved calls_file_function relationships")
 
         for rel in unresolved:

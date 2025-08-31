@@ -136,8 +136,8 @@ class BaseImportHandler(BaseRelationshipHandler, ABC):
         """
         self.logger.log(self.__class__.__name__, "DEBUG: BaseImportHandler.resolve_immediate called")
 
-        # Query unresolved 'imports' relationships
-        unresolved = reader.find_unresolved("imports")
+        # Query unresolved 'imports' relationships for this language only
+        unresolved = reader.find_unresolved("imports", language=self.language)
         self.logger.log(self.__class__.__name__, f"DEBUG: Found {len(unresolved)} unresolved imports relationships")
 
         for rel in unresolved:
