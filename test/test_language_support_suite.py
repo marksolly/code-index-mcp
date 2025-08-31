@@ -78,6 +78,12 @@ class TestLanguageSupportSuite(unittest.TestCase):
 
     @classmethod
     def rebuild_index(cls):
+        # If already initialized and not in debug mode, just ensure connection is active
+        if cls.db_service and not cls.debug_options.language:
+            if not cls.db_service.conn:
+                cls.db_service.connect()
+            return
+
         if cls.db_service:
             cls.db_service.close()
 
@@ -131,7 +137,7 @@ class TestLanguageSupportSuite(unittest.TestCase):
                             files_to_index.append((file_path, lang, code))
 
         orchestrator.process_files(files_to_index)
-        
+
         cls.verifier = RelationshipVerifier(cls.db_service)
 
 
@@ -185,9 +191,11 @@ class AutoDebugTestResult(unittest.TextTestResult):
                 TestLanguageSupportSuite.debug_options.component_names = components_to_debug
                 TestLanguageSupportSuite.rebuild_index()
             else:
-                print(f"\n--- Could not determine components for auto-debugging test: {test.id()} ---")
+                print(f"\nAuto debug error: Could not determine components for auto-debugging test: {test.id()}")
+                print("Run tests again and manually specify --debug-components option.")
         else:
             print(f"\n--- Could not determine relationship data for auto-debugging test: {test.id()} ---")
+            print("Run tests again and manually specify --debug-components option.")
 
     def addFailure(self, test, err):
         self._trigger_auto_debug(test)
@@ -323,6 +331,10 @@ def main():
         print(f"Additional debug components specified: {', '.join(additional_components)}")
 
     sys.argv = [sys.argv[0]] + remaining_argv
+
+    # Initialize database once at the start
+    print("--- Initializing test database ---")
+    TestLanguageSupportSuite.rebuild_index()
 
     # Load passed tests from file once
     passed_tests_file = os.path.join(project_root, 'test', 'passed_tests.json')

@@ -80,7 +80,8 @@ class PythonReferencesConstantHandler(BaseRelationshipHandler):
                                 target_name=constant_name,
                                 rel_type="references_variable",
                                 needs_type="imports",  # Constants are typically imported
-                                target_qname=None
+                                target_qname=None,
+                                intermediate_symbol_qname=file_qname
                             )
                         else:
                             self.logger.log(self.__class__.__name__, f"DEBUG: Source symbol not found: {source_qname}")
@@ -139,15 +140,15 @@ class PythonReferencesConstantHandler(BaseRelationshipHandler):
         """
         self.logger.log(self.__class__.__name__, "DEBUG: PythonReferencesConstantHandler.resolve_immediate called")
 
-        # Query unresolved 'references_variable' relationships
-        unresolved = reader.find_unresolved("references_variable")
-        self.logger.log(self.__class__.__name__, f"DEBUG: Found {len(unresolved)} unresolved references_variable relationships")
+        # Query unresolved 'references_variable' relationships for this language only
+        unresolved = reader.find_unresolved("references_variable", language=self.language)
+        self.logger.log(self.__class__.__name__, f"DEBUG: Found {len(unresolved)} unresolved references_variable relationships for {self.language}")
 
         for rel in unresolved:
             self.logger.log(self.__class__.__name__, f"DEBUG: Processing unresolved reference: {rel['source_qname']} -> {rel['target_name']}")
 
             # Try to resolve the constant reference
-            target_symbol = self._resolve_constant_reference(rel['target_name'], rel['source_qname'], reader)
+            target_symbol = self._resolve_constant_reference(rel['target_name'], rel, reader)
 
             if target_symbol:
                 self.logger.log(self.__class__.__name__, f"DEBUG: Creating resolved reference: {rel['source_qname']} -> {target_symbol['qname']}")
@@ -165,48 +166,66 @@ class PythonReferencesConstantHandler(BaseRelationshipHandler):
             else:
                 self.logger.log(self.__class__.__name__, f"DEBUG: Could not resolve constant reference: {rel['target_name']}")
 
-    def _resolve_constant_reference(self, constant_name: str, source_qname: str, reader: 'IndexReader'):
+    def _resolve_constant_reference(self, constant_name: str, rel: dict, reader: 'IndexReader'):
         """
         Resolve a constant reference by looking for imported or local constants.
 
         Args:
             constant_name: The name of the constant being referenced
-            source_qname: The qname of the source (method/function/file)
+            rel: The unresolved relationship dict
             reader: IndexReader instance
 
         Returns:
             Symbol dict if found, None otherwise
         """
-        self.logger.log(self.__class__.__name__, f"DEBUG: Resolving constant reference: {constant_name}")
+        self.logger.log(self.__class__.__name__, f"DEBUG: Resolving constant reference: {constant_name} from {rel['source_qname']}")
+
+        # Get the file qname from the intermediate_symbol_qname
+        source_file = rel['intermediate_symbol_qname']
+        self.logger.log(self.__class__.__name__, f"DEBUG: Source file: {source_file}")
 
         # First, try to find imported constants
-        source_file = source_qname.split(':')[0] + ":__FILE__"
         import_rels = reader.find_relationships(
             source_qname=source_file,
-            rel_type="imports"
+            rel_type="imports",
+            source_language=self.language,
+            target_language=self.language
         )
+        self.logger.log(self.__class__.__name__, f"DEBUG: Found {len(import_rels)} import relationships for {source_file}")
 
         for import_rel in import_rels:
+            self.logger.log(self.__class__.__name__, f"DEBUG: Checking import: {import_rel['target_qname']}")
             if import_rel['target_qname'] and import_rel['target_qname'].endswith(f":{constant_name}"):
+                self.logger.log(self.__class__.__name__, f"DEBUG: Import matches constant name: {import_rel['target_qname']}")
                 target_symbols = reader.find_symbols(qname=import_rel['target_qname'], language=self.language)
+                self.logger.log(self.__class__.__name__, f"DEBUG: Found {len(target_symbols)} symbols for qname {import_rel['target_qname']}")
                 if target_symbols:
-                    self.logger.log(self.__class__.__name__, f"DEBUG: Found imported constant: {target_symbols[0]['qname']}")
+                    self.logger.log(self.__class__.__name__, f"DEBUG: Found imported constant: {target_symbols[0]['qname']} (type: {target_symbols[0]['symbol_type']})")
                     return target_symbols[0]
+                else:
+                    self.logger.log(self.__class__.__name__, f"DEBUG: No symbols found for qname {import_rel['target_qname']}")
 
         # If not found as imported, try to find as local constant in the same file
-        source_file_name = source_qname.split(':')[0]
+        source_file_name = source_file.split(':')[0]
         local_constant_qname = f"{source_file_name}:{constant_name}"
+        self.logger.log(self.__class__.__name__, f"DEBUG: Checking for local constant: {local_constant_qname}")
         local_symbols = reader.find_symbols(qname=local_constant_qname, language=self.language)
         if local_symbols:
-            self.logger.log(self.__class__.__name__, f"DEBUG: Found local constant: {local_symbols[0]['qname']}")
+            self.logger.log(self.__class__.__name__, f"DEBUG: Found local constant: {local_symbols[0]['qname']} (type: {local_symbols[0]['symbol_type']})")
             return local_symbols[0]
 
         # Try searching by name across all files (fallback)
+        self.logger.log(self.__class__.__name__, f"DEBUG: Falling back to name search for: {constant_name}")
         target_symbols = reader.find_symbols(name=constant_name, language=self.language)
+        self.logger.log(self.__class__.__name__, f"DEBUG: Name search found {len(target_symbols)} symbols")
+        for symbol in target_symbols:
+            self.logger.log(self.__class__.__name__, f"DEBUG: Symbol: {symbol['qname']} (type: {symbol['symbol_type']}, language: {symbol['file_path'].split('.')[-1]})")
+
         # Filter for constant symbols only
         constant_symbols = [s for s in target_symbols if s['symbol_type'] == 'constant']
+        self.logger.log(self.__class__.__name__, f"DEBUG: Filtered to {len(constant_symbols)} constant symbols")
         if constant_symbols:
-            self.logger.log(self.__class__.__name__, f"DEBUG: Found constant by name: {constant_symbols[0]['qname']}")
+            self.logger.log(self.__class__.__name__, f"DEBUG: Found constant by name: {constant_symbols[0]['qname']} (type: {constant_symbols[0]['symbol_type']})")
             return constant_symbols[0]
 
         self.logger.log(self.__class__.__name__, f"DEBUG: Could not resolve constant reference: {constant_name}")

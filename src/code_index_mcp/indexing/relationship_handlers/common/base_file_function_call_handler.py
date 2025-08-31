@@ -185,8 +185,10 @@ class BaseFileFunctionCallHandler(BaseRelationshipHandler, ABC):
         # Look for resolved imports from this file that match the function name
         # We need to query the resolved relationships table since imports are resolved in Phase 2
         import_rels = reader.find_relationships(
+            source_qname=f"{file_qname}:__FILE__",
             rel_type="imports",
-            source_qname=f"{file_qname}:__FILE__"
+            source_language=self.language,
+            target_language=self.language
         )
         self.logger.log(self.__class__.__name__, f"DEBUG: Found {len(import_rels)} resolved imports")
         for rel in import_rels:
@@ -218,7 +220,7 @@ class BaseFileFunctionCallHandler(BaseRelationshipHandler, ABC):
         Language-specific subclasses can override this method if needed.
         """
         # Query remaining unresolved 'calls_file_function' relationships
-        unresolved = reader.find_unresolved("calls_file_function")
+        unresolved = reader.find_unresolved("calls_file_function", language=self.language)
 
         for rel in unresolved:
             self.logger.log(self.__class__.__name__, f"DEBUG: Complex resolution needed for: {rel['source_qname']} -> {rel['target_name']}")

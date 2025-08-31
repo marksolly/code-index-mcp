@@ -46,17 +46,31 @@ class RelationshipVerifier:
             raise AssertionError(f"Relationship type not found: '{name}'")
         return result[0]
 
-    def _get_relationships(self, source_symbol_id, relationship_type_id):
+    def _get_relationships(self, source_symbol_id, relationship_type_id, language=None):
         conn = self.db_service.get_connection()
         cursor = conn.cursor()
-        cursor.execute("""
-            SELECT cs1.name as source_name, cs1.qname as source_qname, cs2.name as target_name, cs2.qname as target_qname, rt.name as rel_type
-            FROM relationships r
-            JOIN code_symbols cs1 ON r.source_symbol_id = cs1.id
-            JOIN code_symbols cs2 ON r.target_symbol_id = cs2.id
-            JOIN relationship_types rt ON r.type_id = rt.id
-            WHERE r.source_symbol_id = ? AND r.type_id = ?
-        """, (source_symbol_id, relationship_type_id))
+
+        if language:
+            cursor.execute("""
+                SELECT cs1.name as source_name, cs1.qname as source_qname, cs2.name as target_name, cs2.qname as target_qname, rt.name as rel_type
+                FROM relationships r
+                JOIN code_symbols cs1 ON r.source_symbol_id = cs1.id
+                JOIN code_symbols cs2 ON r.target_symbol_id = cs2.id
+                JOIN files f1 ON cs1.file_id = f1.id
+                JOIN files f2 ON cs2.file_id = f2.id
+                JOIN relationship_types rt ON r.type_id = rt.id
+                WHERE r.source_symbol_id = ? AND r.type_id = ?
+                AND f1.language = ? AND f2.language = ?
+            """, (source_symbol_id, relationship_type_id, language, language))
+        else:
+            cursor.execute("""
+                SELECT cs1.name as source_name, cs1.qname as source_qname, cs2.name as target_name, cs2.qname as target_qname, rt.name as rel_type
+                FROM relationships r
+                JOIN code_symbols cs1 ON r.source_symbol_id = cs1.id
+                JOIN code_symbols cs2 ON r.target_symbol_id = cs2.id
+                JOIN relationship_types rt ON r.type_id = rt.id
+                WHERE r.source_symbol_id = ? AND r.type_id = ?
+            """, (source_symbol_id, relationship_type_id))
         return cursor.fetchall()
 
     def assert_relationship(self, source, target, relationship_type, language, expected_count=1, source_qname=None, target_qname=None):
@@ -66,47 +80,77 @@ class RelationshipVerifier:
 
         conn = self.db_service.get_connection()
         cursor = conn.cursor()
+
+        # Add language filtering to ensure we only count relationships between symbols of the same language
         cursor.execute("""
-            SELECT COUNT(*) FROM relationships
-            WHERE source_symbol_id = ? AND target_symbol_id = ? AND type_id = ?
-        """, (source_id, target_id, rel_type_id))
-        
+            SELECT COUNT(*) FROM relationships r
+            JOIN code_symbols cs1 ON r.source_symbol_id = cs1.id
+            JOIN code_symbols cs2 ON r.target_symbol_id = cs2.id
+            JOIN files f1 ON cs1.file_id = f1.id
+            JOIN files f2 ON cs2.file_id = f2.id
+            WHERE r.source_symbol_id = ? AND r.target_symbol_id = ? AND r.type_id = ?
+            AND f1.language = ? AND f2.language = ?
+        """, (source_id, target_id, rel_type_id, language, language))
+
         actual_count = cursor.fetchone()[0]
 
         if actual_count != expected_count:
             error_message = (
                 f"AssertionError: Relationship '{relationship_type}' from '{source}' to '{target}' failed.\n"
                 f"Expected count: {expected_count}, Actual count: {actual_count}.\n"
+                f"Language: {language}\n"
             )
-            
-            error_message += self._dump_symbol_relationships(source_id, "source", source)
-            error_message += self._dump_symbol_relationships(target_id, "target", target)
-                
+
+            error_message += self._dump_symbol_relationships(source_id, "source", source, language)
+            error_message += self._dump_symbol_relationships(target_id, "target", target, language)
+
             raise AssertionError(error_message)
 
-    def _dump_symbol_relationships(self, symbol_id, role, name):
+    def _dump_symbol_relationships(self, symbol_id, role, name, language=None):
         """Dumps all relationships for a given symbol."""
         conn = self.db_service.get_connection()
         cursor = conn.cursor()
 
         # Outgoing relationships
-        cursor.execute("""
-            SELECT cs2.name as target_name, cs2.qname as target_qname, rt.name as rel_type
-            FROM relationships r
-            JOIN code_symbols cs2 ON r.target_symbol_id = cs2.id
-            JOIN relationship_types rt ON r.type_id = rt.id
-            WHERE r.source_symbol_id = ?
-        """, (symbol_id,))
+        if language:
+            cursor.execute("""
+                SELECT cs2.name as target_name, cs2.qname as target_qname, rt.name as rel_type
+                FROM relationships r
+                JOIN code_symbols cs2 ON r.target_symbol_id = cs2.id
+                JOIN code_symbols cs1 ON r.source_symbol_id = cs1.id
+                JOIN files f2 ON cs2.file_id = f2.id
+                JOIN relationship_types rt ON r.type_id = rt.id
+                WHERE r.source_symbol_id = ? AND f2.language = ?
+            """, (symbol_id, language))
+        else:
+            cursor.execute("""
+                SELECT cs2.name as target_name, cs2.qname as target_qname, rt.name as rel_type
+                FROM relationships r
+                JOIN code_symbols cs2 ON r.target_symbol_id = cs2.id
+                JOIN relationship_types rt ON r.type_id = rt.id
+                WHERE r.source_symbol_id = ?
+            """, (symbol_id,))
         outgoing = cursor.fetchall()
 
         # Incoming relationships
-        cursor.execute("""
-            SELECT cs1.name as source_name, cs1.qname as source_qname, rt.name as rel_type
-            FROM relationships r
-            JOIN code_symbols cs1 ON r.source_symbol_id = cs1.id
-            JOIN relationship_types rt ON r.type_id = rt.id
-            WHERE r.target_symbol_id = ?
-        """, (symbol_id,))
+        if language:
+            cursor.execute("""
+                SELECT cs1.name as source_name, cs1.qname as source_qname, rt.name as rel_type
+                FROM relationships r
+                JOIN code_symbols cs1 ON r.source_symbol_id = cs1.id
+                JOIN code_symbols cs2 ON r.target_symbol_id = cs2.id
+                JOIN files f1 ON cs1.file_id = f1.id
+                JOIN relationship_types rt ON r.type_id = rt.id
+                WHERE r.target_symbol_id = ? AND f1.language = ?
+            """, (symbol_id, language))
+        else:
+            cursor.execute("""
+                SELECT cs1.name as source_name, cs1.qname as source_qname, rt.name as rel_type
+                FROM relationships r
+                JOIN code_symbols cs1 ON r.source_symbol_id = cs1.id
+                JOIN relationship_types rt ON r.type_id = rt.id
+                WHERE r.target_symbol_id = ?
+            """, (symbol_id,))
         incoming = cursor.fetchall()
 
         dump = f"\n--- Relationships found for {role} symbol '{name}' (id: {symbol_id}) ---\n"
@@ -116,12 +160,12 @@ class RelationshipVerifier:
                 dump += f"    - [{row['rel_type']}]-> {row['target_name']} ({row['target_qname']})\n"
         else:
             dump += "  No outgoing relationships.\n"
-        
+
         if incoming:
             dump += "  Incoming:\n"
             for row in incoming:
                 dump += f"    - [{row['rel_type']}]<- {row['source_name']} ({row['source_qname']})\n"
         else:
             dump += "  No incoming relationships.\n"
-        
+
         return dump

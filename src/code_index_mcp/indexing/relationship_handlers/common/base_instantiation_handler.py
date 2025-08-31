@@ -177,7 +177,7 @@ class BaseInstantiationHandler(BaseRelationshipHandler, ABC):
         potential_target_symbols = reader.find_symbols(name=target_name, language=self.language)
         for symbol in potential_target_symbols:
             # Look for import relationships that import this symbol
-            import_rels = reader.find_relationships(rel_type="imports", target_id=symbol['id'])
+            import_rels = reader.find_relationships(rel_type="imports", target_id=symbol['id'], source_language=self.language, target_language=self.language)
             if import_rels:
                 # Found an import relationship for this symbol
                 self.logger.log(self.__class__.__name__, f"DEBUG: Found class through import: {symbol['qname']}")

@@ -200,7 +200,7 @@ class JavascriptReferencesVariableHandler(BaseRelationshipHandler):
         self.logger.log(self.__class__.__name__, "DEBUG: JavascriptReferencesVariableHandler.resolve_immediate called")
 
         # Query unresolved 'references_variable' relationships
-        unresolved = reader.find_unresolved("references_variable")
+        unresolved = reader.find_unresolved("references_variable", language=self.language)
         self.logger.log(self.__class__.__name__, f"DEBUG: Found {len(unresolved)} unresolved references_variable relationships")
 
         for rel in unresolved:
@@ -243,7 +243,9 @@ class JavascriptReferencesVariableHandler(BaseRelationshipHandler):
         source_file = source_qname.split(':')[0] + ":__FILE__"
         import_rels = reader.find_relationships(
             source_qname=source_file,
-            rel_type="imports"
+            rel_type="imports",
+            source_language=self.language,
+            target_language=self.language
         )
 
         for import_rel in import_rels:

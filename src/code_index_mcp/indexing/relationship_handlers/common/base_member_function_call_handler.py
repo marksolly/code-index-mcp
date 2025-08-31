@@ -454,7 +454,11 @@ class BaseMemberFunctionCallHandler(BaseRelationshipHandler, ABC):
 
         # Try to find instantiations in the current context
         # This is a basic heuristic that looks for recent instantiations
-        instantiation_rels = reader.find_relationships(rel_type="instantiates")
+        instantiation_rels = reader.find_relationships(
+            rel_type="instantiates",
+            source_language=self.language,
+            target_language=self.language
+        )
 
         for rel in instantiation_rels:
             # Look for patterns like variable assignments
@@ -492,7 +496,7 @@ class BaseMemberFunctionCallHandler(BaseRelationshipHandler, ABC):
         Language-specific subclasses can override this method if needed.
         """
         # Query remaining unresolved 'calls_class_method' relationships
-        unresolved = reader.find_unresolved("calls_class_method")
+        unresolved = reader.find_unresolved("calls_class_method", language=self.language)
 
         for rel in unresolved:
             self.logger.log(self.__class__.__name__, f"DEBUG: Complex resolution needed for: {rel['source_qname']} -> {rel['target_name']}")

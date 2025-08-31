@@ -43,7 +43,11 @@ class BaseIsInstanceOfHandler(BaseRelationshipHandler, ABC):
         self.logger.log(self.__class__.__name__, "DEBUG: BaseIsInstanceOfHandler.resolve_immediate called")
 
         # Get all resolved instantiates relationships
-        instantiates_rels = reader.find_relationships(rel_type="instantiates")
+        instantiates_rels = reader.find_relationships(
+            rel_type="instantiates",
+            source_language=self.language,
+            target_language=self.language
+        )
         self.logger.log(self.__class__.__name__, f"DEBUG: Found {len(instantiates_rels)} instantiates relationships")
 
         for inst_rel in instantiates_rels:

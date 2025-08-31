@@ -1,8 +1,14 @@
 import sqlite3
 import re
+import sys
 from typing import Any, Dict, List, Optional
 
 from .indexing_logger import IndexingLogger
+
+
+class DatabaseIntegrityError(Exception):
+    """Raised when database integrity violations are detected that could cause cross-language contamination."""
+    pass
 
 
 class IndexReader:
@@ -16,6 +22,36 @@ class IndexReader:
     def __init__(self, db_connection: sqlite3.Connection, logger: IndexingLogger):
         self.db_connection = db_connection
         self.logger = logger
+
+    def _raise_language_filter_error(self, method_name: str, caller_info: str, bypass_reason: str = None):
+        """
+        Raise a database integrity error for missing language filters.
+
+        Args:
+            method_name: The method name that was called without language filter
+            caller_info: Information about where the call originated
+            bypass_reason: Optional reason for bypassing the check (must be at least 10 characters)
+        """
+        if bypass_reason and len(bypass_reason.strip()) >= 10:
+            self.logger.log("IndexReader", f"WARNING: Language filter bypassed for {method_name} - Reason: {bypass_reason.strip()}")
+            return
+
+        error_msg = f"""
+🚨🚨🚨 DATABASE INTEGRITY VIOLATION PREVENTED 🚨🚨🚨
+🚨 IndexReader.{method_name}() called WITHOUT language filter!
+🚨 Called from: {caller_info}
+🚨
+🚨 CONSEQUENCES PREVENTED:
+🚨 - Cross-language relationship contamination
+🚨 - Database corruption with mixed-language data
+🚨 - Incorrect relationship graphs
+🚨 - Test failures and unreliable results
+🚨
+🚨 REQUIRED FIX: Add language=self.language to the {method_name}() call
+🚨
+🚨 This exception prevents database corruption by failing fast!
+"""
+        raise DatabaseIntegrityError(error_msg)
 
     def _validate_qname(self, qname: str, context: str):
         # Allow file qnames, which don't have a separator
@@ -34,12 +70,27 @@ class IndexReader:
         You are **STRONGLY RECOMMENDED** to specify a language.
 
         **Important** This method returns multiple rows for a single qname.
-        qnames are not guaranteed to be globally unique and our indexing system embraces 
+        qnames are not guaranteed to be globally unique and our indexing system embraces
         ambiguity by design. You may need to store multiple low confidence relationships.
         See NEW_LANG_GUIDE.md.
         """
         if not name and not qname:
             raise ValueError("At least one of 'name' or 'qname' must be provided.")
+
+        # 🚨 LOUD WARNING: Language filter is REQUIRED for mixed-language support
+        if not language:
+            import inspect
+            caller_frame = inspect.currentframe().f_back
+            caller_info = f"{caller_frame.f_code.co_filename}:{caller_frame.f_lineno} in {caller_frame.f_code.co_name}()"
+            print("🚨" * 80)
+            print("🚨 CRITICAL: IndexReader.find_symbols() called WITHOUT language filter!")
+            print(f"🚨 Called from: {caller_info}")
+            print("🚨 This can cause cross-language symbol contamination in mixed-language projects!")
+            print("🚨 Add language=your_language to the find_symbols() call")
+            print("🚨" * 80)
+            import traceback
+            traceback.print_stack()
+            print("🚨" * 80)
 
         conditions = []
         params = []
@@ -63,12 +114,12 @@ class IndexReader:
             JOIN symbol_types st ON cs.type_id = st.id
             WHERE {' AND '.join(conditions)}
         """
-        
+
         cursor = self.db_connection.cursor()
         try:
             cursor.execute(query, params)
             results = cursor.fetchall()
-            
+
             # Build a more readable string for logging
             log_conditions = []
             log_context = {}
@@ -78,21 +129,28 @@ class IndexReader:
             if qname:
                 log_conditions.append(f"qname={qname}")
                 log_context["qname"] = qname
-            
+
             self.logger.log(
-                "IndexReader", 
-                f"find_symbols({', '.join(log_conditions)}): {len(results)} matches", 
+                "IndexReader",
+                f"find_symbols({', '.join(log_conditions)}): {len(results)} matches",
                 **log_context
             )
             return results
         finally:
             cursor.close()
 
-    def find_relationships(self, rel_type: Optional[str] = None, source_id: Optional[int] = None, target_id: Optional[int] = None, source_qname: Optional[str] = None, target_qname: Optional[str] = None, source_language: Optional[str] = None, target_language: Optional[str] = None) -> List[sqlite3.Row]:
+    def find_relationships(self, rel_type: Optional[str] = None, source_id: Optional[int] = None, target_id: Optional[int] = None, source_qname: Optional[str] = None, target_qname: Optional[str] = None, source_language: Optional[str] = None, target_language: Optional[str] = None, bypass_reason: Optional[str] = None) -> List[sqlite3.Row]:
         """
         Finds resolved relationships based on various criteria.
         You are **STRONGLY RECOMMENDED** to specify a language.
         """
+        # 🚨 FAIL FAST: Language filter is REQUIRED for mixed-language support
+        if not source_language and not target_language:
+            import inspect
+            caller_frame = inspect.currentframe().f_back
+            caller_info = f"{caller_frame.f_code.co_filename}:{caller_frame.f_lineno} in {caller_frame.f_code.co_name}()"
+            self._raise_language_filter_error("find_relationships", caller_info, bypass_reason)
+
         conditions = []
         params = []
 
@@ -166,7 +224,7 @@ class IndexReader:
         finally:
             cursor.close()
 
-    def find_unresolved(self, relationship_type: Optional[str] = None, **criteria) -> List[sqlite3.Row]:
+    def find_unresolved(self, relationship_type: Optional[str] = None, bypass_reason: Optional[str] = None, **criteria) -> List[sqlite3.Row]:
         """
         Finds unresolved relationships with flexible criteria. If relationship_type
         is provided, it filters by that type.
@@ -187,6 +245,13 @@ class IndexReader:
             params: List[Any] = []
 
             language = criteria.pop('language', None)
+
+            # 🚨 FAIL FAST: Language filter is REQUIRED for mixed-language support
+            if not language:
+                import inspect
+                caller_frame = inspect.currentframe().f_back
+                caller_info = f"{caller_frame.f_code.co_filename}:{caller_frame.f_lineno} in {caller_frame.f_code.co_name}()"
+                self._raise_language_filter_error("find_unresolved", caller_info, bypass_reason)
 
             if relationship_type:
                 cursor.execute("SELECT id FROM relationship_types WHERE name = ?", (relationship_type,))
