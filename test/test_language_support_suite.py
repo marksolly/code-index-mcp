@@ -35,14 +35,29 @@ if project_root not in sys.path:
 
 from src.code_index_mcp.db.database import DatabaseService
 from src.code_index_mcp.indexing.orchestrator import IndexingOrchestrator
-from src.code_index_mcp.indexing.indexing_logger import IndexingLogger
+from src.code_index_mcp.indexing.indexing_logger import IndexingLogger, ComponentRegistry
 from test.relationship_verifier import RelationshipVerifier
 from test.lang_definitions.base_test_definition import BaseTestDefinition
 
 class DebugOptions:
+    """Container for debugging configuration options used during test execution.
+
+    This class holds the various debugging parameters that control how the
+    indexer logging behaves during test runs, particularly for auto-debugging
+    failed tests.
+    """
     def __init__(self):
-        self.symbol_names = None
-        self.language = None
+        # Symbol-based filtering (not recommended, slow, may exclude some relevant log messages)
+        self.symbol_names = None  # List of symbol names to filter logs by
+
+        # Language filtering (always required when debugging)
+        self.language = None  # Language name (e.g., 'javascript', 'python')
+
+        # Component-based filtering (preferred method)
+        self.component_names = None  # List of component class names to filter logs by
+
+        # Additional components from command line (merged with auto-discovered components)
+        self.additional_components = None  # Extra components specified via --debug-components
 
 class TestLanguageSupportSuite(unittest.TestCase):
     language_to_test = None
@@ -72,14 +87,31 @@ class TestLanguageSupportSuite(unittest.TestCase):
         cls.db_service.initialize_db()
 
         logger = IndexingLogger(enabled=False)
-        if cls.debug_options.symbol_names and cls.debug_options.language:
-            logger = IndexingLogger(
-                enabled=True,
-                filters={
-                    'language': [cls.debug_options.language],
-                    'symbol_names': cls.debug_options.symbol_names
-                }
-            )
+
+        # Use component-based filtering if available, fallback to symbol-based
+        if cls.debug_options.language:
+            filters = {'language': [cls.debug_options.language]}
+
+            if hasattr(cls.debug_options, 'component_names') and cls.debug_options.component_names:
+                # Component-based filtering (preferred)
+                # Merge auto-discovered components with additional components from command line
+                all_components = cls.debug_options.component_names[:]
+                if hasattr(cls.debug_options, 'additional_components') and cls.debug_options.additional_components:
+                    for comp in cls.debug_options.additional_components:
+                        if comp not in all_components:
+                            all_components.append(comp)
+
+                filters['component_names'] = all_components
+                debug_targets_str = ", ".join(all_components)
+                print(f"Using component-based filtering: {debug_targets_str}")
+            elif cls.debug_options.symbol_names:
+                # Symbol-based filtering (fallback)
+                filters['symbol_names'] = cls.debug_options.symbol_names
+                debug_targets_str = ", ".join(cls.debug_options.symbol_names)
+                print(f"Using symbol-based filtering: {debug_targets_str}")
+
+            if len(filters) > 1:  # More than just language filter
+                logger = IndexingLogger(enabled=True, filters=filters)
 
         orchestrator = IndexingOrchestrator(project_root, cls.db_service.get_connection(), logger)
 
@@ -107,26 +139,55 @@ class AutoDebugTestResult(unittest.TextTestResult):
     """A custom TestResult to inject logic on failure."""
 
     def _trigger_auto_debug(self, test):
-        """Extracts symbol and re-runs the indexer with debug info."""
+        """Extracts relevant components and re-runs the indexer with debug info."""
         if not (TestLanguageSupportSuite.auto_debug and self.failfast):
             return
 
-        symbols_to_debug = []
         if hasattr(test, 'relationship_data'):
             rel = test.relationship_data
-            symbols_to_debug.extend([rel['source'], rel['target']])
-
-        if symbols_to_debug:
             lang_name = test.language_name
-            debug_symbols_str = ", ".join(symbols_to_debug)
-            print(f"\n--- Auto-debugging failed test: {test.id()} ---")
-            print(f"--- Re-running indexer with logging on symbols=[{debug_symbols_str}] for language {lang_name} ---\n")
-            
-            TestLanguageSupportSuite.debug_options.symbol_names = symbols_to_debug
-            TestLanguageSupportSuite.debug_options.language = lang_name
-            TestLanguageSupportSuite.rebuild_index()
+
+            # Get all components for this relationship type
+            all_components = ComponentRegistry.get_components_for_relationship(rel['type'])
+
+            if all_components:
+                # Filter to language-specific components only (exclude base classes)
+                lang_specific_components = []
+                for comp in all_components:
+                    # Skip base classes (they start with 'Base' and end with 'Handler')
+                    if not (comp.startswith('Base') and comp.endswith('Handler')):
+                        # Check if component name contains the language name
+                        lang_capitalized = lang_name.capitalize()
+                        if lang_capitalized in comp:
+                            lang_specific_components.append(comp)
+
+                # If no language-specific components found, fall back to all components
+                if not lang_specific_components:
+                    lang_specific_components = all_components[:]
+
+                # For simplicity, pick the first (most relevant) component
+                primary_component = lang_specific_components[0]
+
+                # Merge with additional components from command line
+                components_to_debug = [primary_component]
+                if hasattr(TestLanguageSupportSuite.debug_options, 'additional_components') and TestLanguageSupportSuite.debug_options.additional_components:
+                    for comp in TestLanguageSupportSuite.debug_options.additional_components:
+                        if comp not in components_to_debug:
+                            components_to_debug.append(comp)
+
+                debug_components_str = ", ".join(components_to_debug)
+                print(f"\n--- Auto-debugging failed test: {test.id()} ---")
+                print(f"Re-running indexer with logging on component=[{debug_components_str}] for language {lang_name} ---")
+                print(f"For more detailed logging, specify additional components. Eg: --debug-components=\"{', '.join(all_components)}\" ---\n")
+
+                TestLanguageSupportSuite.debug_options.symbol_names = None  # Clear old method
+                TestLanguageSupportSuite.debug_options.language = lang_name
+                TestLanguageSupportSuite.debug_options.component_names = components_to_debug
+                TestLanguageSupportSuite.rebuild_index()
+            else:
+                print(f"\n--- Could not determine components for auto-debugging test: {test.id()} ---")
         else:
-            print(f"\n--- Could not determine symbols for auto-debugging test: {test.id()} ---")
+            print(f"\n--- Could not determine relationship data for auto-debugging test: {test.id()} ---")
 
     def addFailure(self, test, err):
         self._trigger_auto_debug(test)
@@ -245,11 +306,22 @@ def main():
         action='store_true',
         help="Dump test plan (list of tests that would run) without executing them"
     )
+    parser.add_argument(
+        '--debug-components',
+        help="Additional components to enable logging for (comma-separated, e.g., 'PythonImportHandler,JavascriptFileFunctionCallHandler')"
+    )
     
     args, remaining_argv = parser.parse_known_args()
-    
+
     TestLanguageSupportSuite.auto_debug = args.auto_debug
     TestLanguageSupportSuite.fail_fast = args.failfast
+
+    # Handle additional debug components from command line
+    if args.debug_components:
+        additional_components = [comp.strip() for comp in args.debug_components.split(',') if comp.strip()]
+        TestLanguageSupportSuite.debug_options.additional_components = additional_components
+        print(f"Additional debug components specified: {', '.join(additional_components)}")
+
     sys.argv = [sys.argv[0]] + remaining_argv
 
     # Load passed tests from file once
