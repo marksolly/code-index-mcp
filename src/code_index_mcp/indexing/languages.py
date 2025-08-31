@@ -96,3 +96,36 @@ class JavascriptLanguageDefinition(LanguageDefinition):
             "calls_class_method",
             "references_variable",
         ]
+
+
+class PhpLanguageDefinition(LanguageDefinition):
+    @property
+    def language_name(self) -> str:
+        return "php"
+
+    @property
+    def supported_symbol_types(self) -> List[str]:
+        return [
+            "file",
+            "function",
+            "class",
+            "method",
+            "constant",
+            "variable",
+        ]
+
+    @property
+    def supported_relationship_types(self) -> List[str]:
+        return [
+            "imports",
+            "inherits",
+            "instantiates",
+            "is_instance_of",
+            "declares_file_function",
+            "declares_class_method",
+            "declares_class",
+            "declares_constant",
+            "calls_file_function",
+            "calls_class_method",
+            "references_variable",
+        ]
