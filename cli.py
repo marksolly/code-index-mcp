@@ -1,0 +1,265 @@
+#!/usr/bin/env python3
+"""
+Code Index MCP CLI Tool
+
+A command-line interface for indexing codebases and querying the resulting symbol database.
+
+Examples:
+  # Index a directory
+  uv run python cli.py index /path/to/project
+
+  # Index with custom database
+  uv run python cli.py index /path/to/project --db-path my_index.db
+
+  # Query for all functions
+  uv run python cli.py query "*" --symbol-type function
+
+  # Query with multiple filters
+  uv run python cli.py query "User*" --symbol-type class --symbol-type function --path-pattern "src/**"
+
+  # Query with context
+  uv run python cli.py query "getUser" --include-context properties --include-context relationships
+"""
+
+import argparse
+import os
+import sys
+from pathlib import Path
+from typing import List, Tuple
+
+# Add src to path for imports
+project_root = Path(__file__).parent
+src_path = project_root / "src"
+if str(src_path) not in sys.path:
+    sys.path.insert(0, str(src_path))
+
+from code_index_mcp.db.database import DatabaseService
+from code_index_mcp.indexing.orchestrator import IndexingOrchestrator
+from code_index_mcp.indexing.indexing_logger import IndexingLogger
+from code_index_mcp.indexing.ignore_handler import IgnoreHandler
+from code_index_mcp.symbol_finder import SymbolFinder
+
+
+def build_extension_map() -> dict:
+    """Build extension to language mapping from language definitions."""
+    from code_index_mcp.indexing.languages import LanguageDefinition
+    import inspect
+
+    extension_map = {}
+
+    # Discover language definitions (same way as orchestrator)
+    try:
+        # Import the languages module
+        import code_index_mcp.indexing.languages as lang_module
+
+        for name, obj in inspect.getmembers(lang_module):
+            if (inspect.isclass(obj) and
+                hasattr(obj, '__bases__') and
+                any('LanguageDefinition' in str(base) for base in obj.__bases__)):
+                try:
+                    definition = obj()
+                    if hasattr(definition, 'file_extensions'):
+                        for ext in definition.file_extensions:
+                            extension_map[ext] = definition.language_name
+                except Exception:
+                    continue
+    except ImportError:
+        pass
+
+    return extension_map
+
+
+def scan_directory(target_dir: str, ignore_handler: IgnoreHandler) -> List[Tuple[str, str, str]]:
+    """Scan directory for files and return (path, language, content) tuples."""
+    extension_map = build_extension_map()
+    files_to_index = []
+
+    print(f"Scanning directory: {target_dir}")
+
+    for root, dirs, files in os.walk(target_dir):
+        # Filter directories in-place to avoid walking ignored dirs
+        dirs[:] = [d for d in dirs if not ignore_handler.is_ignored(os.path.join(root, d))]
+
+        for file in files:
+            file_path = os.path.join(root, file)
+
+            if ignore_handler.is_ignored(file_path):
+                continue
+
+            # Check extension
+            _, ext = os.path.splitext(file)
+            if ext in extension_map:
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                    language = extension_map[ext]
+                    files_to_index.append((file_path, language, content))
+                    print(f"Found: {os.path.relpath(file_path, target_dir)} ({language})")
+                except (UnicodeDecodeError, IOError) as e:
+                    print(f"Warning: Could not read {file_path}: {e}")
+                    continue
+
+    print(f"Total files to index: {len(files_to_index)}")
+    return files_to_index
+
+
+def cmd_index(args):
+    """Handle the index command."""
+    target_dir = Path(args.directory).resolve()
+    db_path = Path(args.db_path or "code_index.db").resolve()
+
+    if not target_dir.exists():
+        print(f"Error: Directory {target_dir} does not exist")
+        return 1
+
+    if not target_dir.is_dir():
+        print(f"Error: {target_dir} is not a directory")
+        return 1
+
+    print(f"Indexing directory: {target_dir}")
+    print(f"Database: {db_path}")
+
+    # Setup database
+    db_service = DatabaseService(str(db_path))
+    db_service.delete_db()  # Start fresh
+    db_service.initialize_db()
+
+    # Setup ignore handler
+    ignore_handler = IgnoreHandler(str(target_dir))
+
+    # Scan directory
+    files_to_index = scan_directory(str(target_dir), ignore_handler)
+
+    if not files_to_index:
+        print("No files found to index")
+        return 0
+
+    # Setup orchestrator with filters to show useful progress without too much noise
+    logger_filters = {
+        'component_names' : ['Orchestrator']
+    }
+    logger = IndexingLogger(enabled=True, filters=logger_filters)
+    orchestrator = IndexingOrchestrator(str(target_dir), db_service.get_connection(), logger)
+
+    # Process files
+    print("Starting indexing process...")
+    orchestrator.process_files(files_to_index)
+
+    print(f"Indexing complete. Database saved to: {db_path}")
+    return 0
+
+
+def parse_csv_list(values):
+    """Parse a list that may contain comma-separated values."""
+    if not values:
+        return None
+
+    result = []
+    for value in values:
+        if ',' in value:
+            # Split by comma and strip whitespace
+            result.extend([v.strip() for v in value.split(',') if v.strip()])
+        else:
+            result.append(value)
+    return result
+
+
+def cmd_query(args):
+    """Handle the query command."""
+    db_path = Path(args.db_path or "code_index.db").resolve()
+
+    if not db_path.exists():
+        print(f"Error: Database {db_path} does not exist. Run 'index' command first.")
+        return 1
+
+    # Setup database
+    db_service = DatabaseService(str(db_path))
+    db_service.connect()
+
+    # Setup symbol finder
+    finder = SymbolFinder(db_service)
+
+    # Prepare arguments - handle CSV and multiple args
+    symbol_type = parse_csv_list(args.symbol_type)
+    include_context = parse_csv_list(args.include_context)
+
+    # Execute query
+    try:
+        result = finder.find_symbols(
+            pattern=args.pattern,
+            match_mode=args.match_mode,
+            case_sensitive=args.case_sensitive,
+            symbol_type=symbol_type,
+            path_pattern=args.path_pattern,
+            limit=args.limit,
+            include_context=include_context
+        )
+
+        print(result)
+        return 0
+
+    except ValueError as e:
+        print(f"Error: {e}")
+        return 1
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Code Index MCP CLI Tool",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Index a directory
+  uv run python cli.py index /path/to/project
+
+  # Index with custom database
+  uv run python cli.py index /path/to/project --db-path my_index.db
+
+  # Query for all functions
+  uv run python cli.py query "*" --symbol-type function
+
+  # Query with multiple filters
+  uv run python cli.py query "User*" --symbol-type class --symbol-type function --path-pattern "src/**"
+
+  # Query with context
+  uv run python cli.py query "getUser" --include-context properties --include-context relationships
+        """
+    )
+
+    subparsers = parser.add_subparsers(dest='command', help='Available commands')
+
+    # Index command
+    index_parser = subparsers.add_parser('index', help='Index a directory')
+    index_parser.add_argument('directory', help='Directory to index')
+    index_parser.add_argument('--db-path', help='Path to database file (default: code_index.db)')
+    index_parser.set_defaults(func=cmd_index)
+
+    # Query command
+    query_parser = subparsers.add_parser('query', help='Query the index')
+    query_parser.add_argument('pattern', help='Search pattern')
+    query_parser.add_argument('--db-path', help='Path to database file (default: code_index.db)')
+    query_parser.add_argument('--match-mode', choices=['glob', 'regex'],
+                             default='glob', help='Pattern matching mode (default: glob)')
+    query_parser.add_argument('--case-sensitive', action='store_true',
+                             help='Case sensitive matching')
+    query_parser.add_argument('--symbol-type', action='append',
+                             help='Filter by symbol type (can be used multiple times)')
+    query_parser.add_argument('--path-pattern', help='Filter by file path pattern')
+    query_parser.add_argument('--limit', type=int, default=50,
+                             help='Maximum number of results (default: 50)')
+    query_parser.add_argument('--include-context', action='append',
+                             choices=['all', 'properties', 'relationships', 'location'],
+                             help='Context to include (can be used multiple times, default: all)')
+    query_parser.set_defaults(func=cmd_query)
+
+    args = parser.parse_args()
+
+    if not args.command:
+        parser.print_help()
+        return 1
+
+    return args.func(args)
+
+
+if __name__ == '__main__':
+    sys.exit(main())

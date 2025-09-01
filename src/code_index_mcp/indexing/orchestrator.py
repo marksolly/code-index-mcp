@@ -30,19 +30,16 @@ class IndexingOrchestrator:
 
     def _discover_language_definitions(self) -> Dict[str, LanguageDefinition]:
         definitions = {}
-        package_path = Path(__file__).parent / "languages.py"
-        package_name = "src.code_index_mcp.indexing.languages"
 
-        try:
-            module = importlib.import_module(package_name)
-            for attribute_name in dir(module):
-                attribute = getattr(module, attribute_name)
-                if isinstance(attribute, type) and issubclass(attribute, LanguageDefinition) and attribute is not LanguageDefinition:
-                    instance = attribute()
-                    definitions[instance.language_name] = instance
-        except ImportError as e:
-            self.logger.mustLog("Orchestrator", f"Failed to import language definitions: {e}")
-            raise e
+        # Import the languages module (already imported at the top)
+        from . import languages as lang_module
+
+        for attribute_name in dir(lang_module):
+            attribute = getattr(lang_module, attribute_name)
+            if isinstance(attribute, type) and issubclass(attribute, LanguageDefinition) and attribute is not LanguageDefinition:
+                instance = attribute()
+                definitions[instance.language_name] = instance
+
         return definitions
 
     def _get_language_definition(self, language: str) -> LanguageDefinition:
@@ -62,18 +59,45 @@ class IndexingOrchestrator:
     def _get_symbol_extractor_class(self, language: str) -> Type[BaseSymbolExtractor]:
         if language not in self.symbol_extractor_classes:
             try:
-                module = importlib.import_module(f".{language}_symbol_extractor", package="src.code_index_mcp.indexing.symbol_extractors")
-                for attribute_name in dir(module):
-                    attribute = getattr(module, attribute_name)
-                    if isinstance(attribute, type) and issubclass(attribute, BaseSymbolExtractor) and attribute is not BaseSymbolExtractor:
-                        self.symbol_extractor_classes[language] = attribute
+                # Use filesystem-based discovery (same as relationship handlers)
+                package_path = Path(__file__).parent / "symbol_extractors"
+                package_name = "src.code_index_mcp.indexing.symbol_extractors"
+
+                for _, module_name, _ in pkgutil.iter_modules([str(package_path)]):
+                    # Check if this module matches the expected language pattern
+                    expected_name = f"{language}_symbol_extractor"
+                    if module_name == expected_name:
+                        self.logger.mustLog("Orchestrator", f"Found symbol extractor module: {module_name}")
+                        module = importlib.import_module(f".{module_name}", package_name)
+
+                        # Find the BaseSymbolExtractor subclass in the module
+                        # Use the BaseSymbolExtractor from the module itself to avoid import path issues
+                        module_base_extractor = getattr(module, 'BaseSymbolExtractor', None)
+                        if module_base_extractor:
+                            found_class = False
+                            for attribute_name in dir(module):
+                                attribute = getattr(module, attribute_name)
+                                is_type = isinstance(attribute, type)
+                                is_subclass = is_type and issubclass(attribute, module_base_extractor)
+                                is_not_base = attribute is not module_base_extractor
+                                if is_type and is_subclass and is_not_base:
+                                    self.logger.mustLog("Orchestrator", f"Found symbol extractor class: {attribute_name}")
+                                    self.symbol_extractor_classes[language] = attribute
+                                    found_class = True
+                                    break
+                            if not found_class:
+                                self.logger.mustLog("Orchestrator", f"No BaseSymbolExtractor subclass found in {module_name}")
+                        else:
+                            self.logger.mustLog("Orchestrator", f"BaseSymbolExtractor not found in {module_name}")
                         break
+
             except ImportError as e:
                 self.logger.mustLog("Orchestrator", f"Failed to import symbol extractor for {language}: {e}")
                 raise ValueError(f"Unsupported language or missing extractor: {language}")
 
         extractor_class = self.symbol_extractor_classes.get(language)
         if not extractor_class:
+            self.logger.mustLog("Orchestrator", f"No symbol extractor found for language: {language}")
             raise ValueError(f"No symbol extractor found for language: {language}")
         return extractor_class
 
