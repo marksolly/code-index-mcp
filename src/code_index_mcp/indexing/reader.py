@@ -4,6 +4,7 @@ import sys
 from typing import Any, Dict, List, Optional
 
 from .indexing_logger import IndexingLogger
+from .timing_utils import profile_db_operation
 
 
 class DatabaseIntegrityError(Exception):
@@ -61,6 +62,7 @@ class IndexReader:
         if not self.QNAME_VALIDATION_REGEX.match(qname):
             raise ValueError(f"IndexReader: Invalid qname format in {context}: '{qname}'");
 
+    @profile_db_operation()
     def find_symbols(
         self, name: Optional[str] = None, qname: Optional[str] = None, match_type: str = "exact", language: Optional[str] = None
     ) -> List[sqlite3.Row]:
@@ -139,6 +141,7 @@ class IndexReader:
         finally:
             cursor.close()
 
+    @profile_db_operation()
     def find_relationships(self, rel_type: Optional[str] = None, source_id: Optional[int] = None, target_id: Optional[int] = None, source_qname: Optional[str] = None, target_qname: Optional[str] = None, source_language: Optional[str] = None, target_language: Optional[str] = None, bypass_reason: Optional[str] = None) -> List[sqlite3.Row]:
         """
         Finds resolved relationships based on various criteria.
@@ -204,6 +207,7 @@ class IndexReader:
         finally:
             cursor.close()
 
+    @profile_db_operation()
     def get_symbol_by_id(self, symbol_id: int) -> Optional[sqlite3.Row]:
         """
         Retrieves a symbol by its ID.
@@ -224,6 +228,7 @@ class IndexReader:
         finally:
             cursor.close()
 
+    @profile_db_operation()
     def find_unresolved(self, relationship_type: Optional[str] = None, bypass_reason: Optional[str] = None, **criteria) -> List[sqlite3.Row]:
         """
         Finds unresolved relationships with flexible criteria. If relationship_type

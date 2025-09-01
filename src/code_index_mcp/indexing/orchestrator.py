@@ -12,13 +12,13 @@ from .languages import LanguageDefinition
 from .reader import IndexReader
 from .relationship_handlers.base_relationship_handler import BaseRelationshipHandler
 from .symbol_extractors.base_symbol_extractor import BaseSymbolExtractor
+from .timing_utils import time_block
 from .writer import IndexWriter
 
 
 class IndexingOrchestrator:
-    def __init__(self, project_root: str, db_connection: Optional[sqlite3.Connection] = None, logger: Optional[IndexingLogger] = None):
+    def __init__(self, project_root: str, db_service, logger: Optional[IndexingLogger] = None):
         self.project_root = project_root
-        self.db_connection = db_connection or sqlite3.connect(":memory:")
         self.logger = logger or IndexingLogger(enabled=False)
         self.ignore_handler = IgnoreHandler(project_root)
         self.symbol_extractor_classes: Dict[str, Type[BaseSymbolExtractor]] = {}
@@ -30,6 +30,13 @@ class IndexingOrchestrator:
         # Cache tree-sitter parsers and language objects for efficiency
         self.parsers: Dict[str, Any] = {}
         self.language_objects: Dict[str, Any] = {}
+
+        # Require DatabaseService for high-speed optimizations
+        if not hasattr(db_service, 'get_connection'):
+            raise TypeError("IndexingOrchestrator requires a DatabaseService instance, not a raw sqlite3.Connection")
+
+        self.db_service = db_service
+        self.db_connection = db_service.get_connection()
 
     def _get_package_name(self, subpackage: str) -> str:
         """Build package name relative to our base package."""
@@ -114,7 +121,7 @@ class IndexingOrchestrator:
         after filtering them using .indexerignore rules.
         """
         self.logger.mustLog("Orchestrator", "Starting file filtering and indexing process.")
-        
+
         files_to_index = []
         scan_log = []
         for file_path, language, source_code in all_files:
@@ -123,7 +130,7 @@ class IndexingOrchestrator:
             else:
                 scan_log.append(f"+ {file_path}")
                 files_to_index.append((file_path, language, source_code))
-        
+
         # Output the scan log
         print("\n".join(scan_log))
 
@@ -134,33 +141,56 @@ class IndexingOrchestrator:
         writer = IndexWriter(self.db_connection, self.logger)
         reader = IndexReader(self.db_connection, self.logger)
 
-        # Phase 1: Symbol Extraction for all files
-        self.logger.mustLog("Orchestrator", "Beginning Phase 1: Symbol Extraction.")
-        for file_path, language, source_code in files_to_index:
-            language_definition = self._get_language_definition(language)
-            self.logger.current_context['language'] = language
-            writer.set_language_definition(language_definition)
-            self.run_phase_1_symbol_extraction(file_path, language, source_code, writer)
-        self.logger.mustLog("Orchestrator", "Completed Phase 1.")
+        # Only enable profiling if explicitly requested (not automatically)
+        profiling_enabled = False
+        if hasattr(self.logger, 'profiling_enabled'):
+            profiling_enabled = self.logger.profiling_enabled
+
+        # Start total timing only if profiling is already enabled
+        if profiling_enabled and hasattr(self.logger, 'start_timing'):
+            self.logger.start_timing("total_indexing")
+
+        # Phase 1: Symbol Extraction for all files (High-Speed Mode)
+        with time_block(self.logger, "phase_1_symbol_extraction"):
+            self.logger.mustLog("Orchestrator", "Beginning Phase 1: Symbol Extraction (High-Speed Mode).")
+            with self.db_service.high_speed_mode():
+                for file_path, language, source_code in files_to_index:
+                    language_definition = self._get_language_definition(language)
+                    self.logger.current_context['language'] = language
+                    writer.set_language_definition(language_definition)
+                    self.run_phase_1_symbol_extraction(file_path, language, source_code, writer)
+            self.logger.mustLog("Orchestrator", "Completed Phase 1.")
 
         # Phase 2: Intermediate Relationship Resolution
-        self.logger.mustLog("Orchestrator", "Beginning Phase 2: Intermediate Resolution.")
-        # Get all unique languages from the discovered language definitions
-        unique_languages = list(self.language_definitions.keys())
-        for lang in unique_languages:
-            self.logger.current_context['language'] = lang
-            language_definition = self._get_language_definition(lang)
-            writer.set_language_definition(language_definition)
-            self.run_phase_2_intermediate_resolution(writer, reader, lang)
-        self.logger.mustLog("Orchestrator", "Completed Phase 2.")
+        with time_block(self.logger, "phase_2_intermediate_resolution"):
+            self.logger.mustLog("Orchestrator", "Beginning Phase 2: Intermediate Resolution.")
+            # Get all unique languages from the discovered language definitions
+            unique_languages = list(self.language_definitions.keys())
+            for lang in unique_languages:
+                self.logger.current_context['language'] = lang
+                language_definition = self._get_language_definition(lang)
+                writer.set_language_definition(language_definition)
+                self.run_phase_2_intermediate_resolution(writer, reader, lang)
+            self.logger.mustLog("Orchestrator", "Completed Phase 2.")
 
         # Phase 3: Final Relationship Resolution
-        self.logger.mustLog("Orchestrator", "Beginning Phase 3: Final Resolution.")
-        for lang in unique_languages:
-            self.logger.current_context['language'] = lang
-            language_definition = self._get_language_definition(lang)
-            writer.set_language_definition(language_definition)
-            self.run_phase_3_final_resolution(writer, reader, lang)
+        with time_block(self.logger, "phase_3_final_resolution"):
+            self.logger.mustLog("Orchestrator", "Beginning Phase 3: Final Resolution.")
+            for lang in unique_languages:
+                self.logger.current_context['language'] = lang
+                language_definition = self._get_language_definition(lang)
+                writer.set_language_definition(language_definition)
+                self.run_phase_3_final_resolution(writer, reader, lang)
+            self.logger.mustLog("Orchestrator", "Completed Phase 3.")
+
+        # Stop total timing and print profiling report only if profiling was enabled
+        if profiling_enabled:
+            if hasattr(self.logger, 'stop_timing'):
+                self.logger.stop_timing("total_indexing")
+
+            if hasattr(self.logger, 'print_profiling_report'):
+                self.logger.print_profiling_report()
+
         self.logger.mustLog("Orchestrator", "Completed multi-phase indexing process.")
 
     def run_phase_1_symbol_extraction(self, file_path: str, language: str, source_code: str, writer: IndexWriter):
@@ -204,7 +234,9 @@ class IndexingOrchestrator:
             self.logger.log("Orchestrator", f"P2 Resolving: {handler_class.__name__}")
             _, language_obj = self._get_parser_and_language(language)
             handler = handler_class(language, language_obj, self.logger)
-            handler.resolve_immediate(writer, reader)
+            # Use batching per handler. Some handlers depend on previous handlers in the pipeline.
+            with writer.batch_relationships() as batch_writer:
+                handler.resolve_immediate(batch_writer, reader)
 
     def run_phase_3_final_resolution(self, writer: IndexWriter, reader: IndexReader, language: str):
         """Phase 3: Complex multi-step relationship resolution"""
@@ -219,7 +251,9 @@ class IndexingOrchestrator:
             self.logger.log("Orchestrator", f"P3 Resolving: {handler_class.__name__}")
             _, language_obj = self._get_parser_and_language(language)
             handler = handler_class(language, language_obj, self.logger)
-            handler.resolve_complex(writer, reader)
+            # Use batching per handler. Some handlers depend on previous handlers in the pipeline.
+            with writer.batch_relationships() as batch_writer:
+                handler.resolve_complex(batch_writer, reader)
         self.logger.mustLogForLang("Orchestrator", f"Phase 3: Final Resolution completed for {language}")
 
 

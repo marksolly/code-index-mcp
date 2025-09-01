@@ -1,7 +1,8 @@
 import inspect
 import importlib
 import os
-from typing import Any, Dict, List
+import time
+from typing import Any, Dict, List, Optional
 
 # src/code_index_mcp/utils/indexing_logger.py
 
@@ -123,6 +124,13 @@ class IndexingLogger:
         self.filters = filters or {}
         self.current_context = {}
 
+        # Profiling data
+        self.profiling_enabled = False
+        self.timing_data = {}
+        self.start_times = {}
+        self.db_time = 0.0
+        self.total_time = 0.0
+
         print(f"Logger initialized with filters: {self.filters}")
 
     def set_context(self, **context):
@@ -201,3 +209,95 @@ class IndexingLogger:
         """Creates a clean, structured log line."""
         dump_str = ", ".join(f"{k}='{v}'" for k, v in dump_vars.items())
         return f"{component_name}: {message} {dump_str}"
+
+    # Profiling methods
+    def enable_profiling(self):
+        """Enable profiling mode."""
+        self.profiling_enabled = True
+        self.timing_data = {}
+        self.start_times = {}
+        self.db_time = 0.0
+        self.total_time = 0.0
+        self.mustLog("Profiling", "Profiling enabled")
+
+    def start_timing(self, operation: str):
+        """Start timing an operation."""
+        if not self.profiling_enabled:
+            return
+        self.start_times[operation] = time.time()
+
+    def stop_timing(self, operation: str, is_db_operation: bool = False):
+        """Stop timing an operation and record the duration."""
+        if not self.profiling_enabled or operation not in self.start_times:
+            return
+
+        duration = time.time() - self.start_times[operation]
+        if operation not in self.timing_data:
+            self.timing_data[operation] = []
+        self.timing_data[operation].append(duration)
+
+        # Store total time if this is the total_indexing operation
+        if operation == "total_indexing":
+            self.total_time = duration
+
+        if is_db_operation:
+            self.db_time += duration
+
+        #self.mustLog("Profiling", f"{operation} took {duration:.4f}s")
+
+    def add_db_time(self, duration: float):
+        """Manually add database time."""
+        if not self.profiling_enabled:
+            return
+        self.db_time += duration
+
+    def get_profiling_summary(self) -> Dict[str, Any]:
+        """Get profiling summary."""
+        if not self.profiling_enabled:
+            return {}
+
+        total_operations = sum(len(times) for times in self.timing_data.values())
+        total_db_time = self.db_time
+
+        summary = {
+            'total_operations': total_operations,
+            'total_db_time': total_db_time,
+            'operation_breakdown': {}
+        }
+
+        for operation, times in self.timing_data.items():
+            summary['operation_breakdown'][operation] = {
+                'count': len(times),
+                'total_time': sum(times),
+                'avg_time': sum(times) / len(times),
+                'min_time': min(times),
+                'max_time': max(times)
+            }
+
+        return summary
+
+    def print_profiling_report(self):
+        """Print a detailed profiling report."""
+        if not self.profiling_enabled:
+            print("Profiling not enabled")
+            return
+
+        summary = self.get_profiling_summary()
+
+        print("\n" + "="*60)
+        print("PROFILING REPORT")
+        print("="*60)
+        print(f"Total operations: {summary['total_operations']}")
+        print(f"Total database time: {summary['total_db_time']:.4f}s")
+        print(f"Database time percentage: {(summary['total_db_time'] / self.total_time * 100):.1f}%" if self.total_time > 0 else "N/A")
+
+        print("\nOperation Breakdown:")
+        print("-" * 40)
+        for operation, stats in summary['operation_breakdown'].items():
+            print(f"{operation}:")
+            print(f"  Count: {stats['count']}")
+            print(f"  Total: {stats['total_time']:.4f}s")
+            print(f"  Avg: {stats['avg_time']:.4f}s")
+            print(f"  Min: {stats['min_time']:.4f}s")
+            print(f"  Max: {stats['max_time']:.4f}s")
+        print("="*60)

@@ -1,10 +1,12 @@
 import sqlite3
 import re
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from .models import Symbol
 from .languages import LanguageDefinition
+from .timing_utils import profile_db_operation
 
 
 class IndexWriter:
@@ -21,6 +23,11 @@ class IndexWriter:
         self.symbol_type_ids: Dict[str, int] = {}
         self.relationship_type_ids: Dict[str, int] = {}
         self._file_id_cache: Dict[str, int] = {}
+
+        # Batching support
+        self._relationship_batch_mode = False
+        self._relationship_batch: List[Tuple[int, int, int, float]] = []
+
         self._load_type_ids()
 
     def set_language_definition(self, language_definition: LanguageDefinition):
@@ -83,6 +90,7 @@ class IndexWriter:
         finally:
             cursor.close()
 
+    @profile_db_operation()
     def add_file_symbol(self, symbol: Symbol):
         """Adds a file symbol to the database, creating the file entry if needed.
 
@@ -106,13 +114,14 @@ class IndexWriter:
             symbol.id = cursor.lastrowid
             symbol.file_id = file_id
             self.db_connection.commit()
-            
+
             self.logger.log("IndexWriter", f"add_symbol({symbol.qname})")
 
             return symbol
         finally:
             cursor.close()
 
+    @profile_db_operation()
     def add_symbol(self, symbol: Symbol):
         """Adds a symbol directly to the database.
 
@@ -149,6 +158,52 @@ class IndexWriter:
         finally:
             cursor.close()
 
+    @contextmanager
+    def batch_relationships(self):
+        """Context manager for batching relationship operations.
+
+        Usage:
+            with writer.batch_relationships() as batch_writer:
+                batch_writer.add_relationship(...)
+                batch_writer.add_relationship(...)
+                # All relationships executed as single batch operation
+
+        Note: Nested batch contexts are not allowed.
+        """
+        if self._relationship_batch_mode:
+            raise RuntimeError("Cannot nest batch_relationships() contexts")
+
+        # Enter batch mode
+        self._relationship_batch_mode = True
+        self._relationship_batch = []
+
+        try:
+            yield self
+        finally:
+            # Execute batch and exit batch mode
+            if self._relationship_batch:
+                self._execute_relationship_batch()
+            self._relationship_batch_mode = False
+            self._relationship_batch = []
+
+    def _execute_relationship_batch(self):
+        """Execute all batched relationship operations in a single transaction."""
+        if not self._relationship_batch:
+            return
+
+        cursor = self.db_connection.cursor()
+        try:
+            cursor.executemany(
+                "INSERT INTO relationships (source_symbol_id, target_symbol_id, type_id, confidence) VALUES (?, ?, ?, ?)",
+                self._relationship_batch
+            )
+            self.db_connection.commit()
+            self.logger.log("IndexWriter", f"Executed batch of {len(self._relationship_batch)} relationships")
+        finally:
+            cursor.close()
+            self._relationship_batch = []
+
+    @profile_db_operation()
     def add_relationship(
         self,
         source_symbol_id: int,
@@ -158,7 +213,11 @@ class IndexWriter:
         target_qname: str,
         confidence: float = 1.0,
     ):
-        """Adds a resolved relationship directly to the database."""
+        """Adds a resolved relationship to the database.
+
+        If in batch mode, collects the relationship for later batch execution.
+        Otherwise, executes immediately.
+        """
         self._validate_qname(source_qname, "add_relationship source")
         self._validate_qname(target_qname, "add_relationship target")
         if self.language_definition and rel_type not in self.language_definition.supported_relationship_types:
@@ -169,25 +228,32 @@ class IndexWriter:
             self.logger.log("IndexWriter", f"Unknown relationship type '{rel_type}' when adding relationship.")
             return
 
-        cursor = self.db_connection.cursor()
-        try:
-            cursor.execute(
-                "INSERT INTO relationships (source_symbol_id, target_symbol_id, type_id, confidence) VALUES (?, ?, ?, ?)",
-                (source_symbol_id, target_symbol_id, rel_type_id, confidence),
-            )
-            self.db_connection.commit()
-            self.logger.log(
-                "IndexWriter",
-                f"add_relationship({source_qname} {rel_type} {target_qname}"
-            )
-        finally:
-            cursor.close()
+        if self._relationship_batch_mode:
+            # Collect for batch execution
+            self._relationship_batch.append((source_symbol_id, target_symbol_id, rel_type_id, confidence))
+            self.logger.log("IndexWriter", f"Batched relationship: {source_qname} {rel_type} {target_qname}")
+        else:
+            # Execute immediately
+            cursor = self.db_connection.cursor()
+            try:
+                cursor.execute(
+                    "INSERT INTO relationships (source_symbol_id, target_symbol_id, type_id, confidence) VALUES (?, ?, ?, ?)",
+                    (source_symbol_id, target_symbol_id, rel_type_id, confidence),
+                )
+                self.db_connection.commit()
+                self.logger.log(
+                    "IndexWriter",
+                    f"add_relationship({source_qname} {rel_type} {target_qname})"
+                )
+            finally:
+                cursor.close()
 
+    @profile_db_operation()
     def add_unresolved_relationship(
         self, source_symbol_id: int, source_qname: str, target_name: str, rel_type: str, needs_type: str, target_qname: str = None, intermediate_symbol_qname: str = None
     ):
         """Adds an unresolved relationship directly to the database.
-            
+
             Args:
             source_symbol_id    The ID of the symbol which forms the left hand side of the unresolved relationship
             source_qname        The qname of the symbol which forms the left hand side of the unresolved relationship
