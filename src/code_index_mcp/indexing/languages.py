@@ -14,6 +14,12 @@ class LanguageDefinition(ABC):
 
     @property
     @abstractmethod
+    def file_extensions(self) -> List[str]:
+        """File extensions associated with this language."""
+        pass
+
+    @property
+    @abstractmethod
     def supported_symbol_types(self) -> List[str]:
         """A list of symbol types supported by the language."""
         pass
@@ -31,6 +37,10 @@ class PythonLanguageDefinition(LanguageDefinition):
     @property
     def language_name(self) -> str:
         return "python"
+
+    @property
+    def file_extensions(self) -> List[str]:
+        return [".py"]
 
     @property
     def supported_symbol_types(self) -> List[str]:
@@ -69,6 +79,10 @@ class JavascriptLanguageDefinition(LanguageDefinition):
         return "javascript"
 
     @property
+    def file_extensions(self) -> List[str]:
+        return [".js"]
+
+    @property
     def supported_symbol_types(self) -> List[str]:
         return [
             "file",
@@ -102,6 +116,10 @@ class PhpLanguageDefinition(LanguageDefinition):
     @property
     def language_name(self) -> str:
         return "php"
+
+    @property
+    def file_extensions(self) -> List[str]:
+        return [".php"]
 
     @property
     def supported_symbol_types(self) -> List[str]:
