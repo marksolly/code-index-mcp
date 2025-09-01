@@ -135,7 +135,7 @@ class IndexingOrchestrator:
     def run_phase_1_symbol_extraction(self, file_path: str, language: str, source_code: str, writer: IndexWriter):
         """Phase 1: Extract symbols and create unresolved relationships"""
         self.logger.set_context(file_path=file_path, language=language)
-        self.logger.mustLogForLang("Orchestrator", f"Extracting symbols for {file_path} ({language})")
+        self.logger.log("Orchestrator", f"P1 Extracting {file_path} ({language})")
         try:
             # Get cached parser and language objects for efficiency
             parser, language_obj = self._get_parser_and_language(language)
@@ -170,6 +170,7 @@ class IndexingOrchestrator:
         sorted_handlers = self._sort_handlers_by_dependencies(handlers)
 
         for handler_class in sorted_handlers.values():
+            self.logger.log("Orchestrator", f"P2 Resolving: {handler_class.__name__}")
             _, language_obj = self._get_parser_and_language(language)
             handler = handler_class(language, language_obj, self.logger)
             handler.resolve_immediate(writer, reader)
@@ -184,6 +185,7 @@ class IndexingOrchestrator:
         sorted_handlers = self._sort_handlers_by_dependencies(handlers)
 
         for handler_class in sorted_handlers.values():
+            self.logger.log("Orchestrator", f"P3 Resolving: {handler_class.__name__}")
             _, language_obj = self._get_parser_and_language(language)
             handler = handler_class(language, language_obj, self.logger)
             handler.resolve_complex(writer, reader)
