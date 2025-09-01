@@ -37,11 +37,18 @@ class PythonImportHandler(BaseImportHandler):
                 else:
                     return None
 
-            # Extract all imported names
-            # Find all dotted_name nodes that are direct children of the import_from_statement
+            # Extract imported names - these are the names being imported, not the module name
             imported_names = []
+
+            # Find all imported names by looking for nodes after the 'import' keyword
+            found_import_keyword = False
             for child in node.children:
-                if child.type == "dotted_name":
+                if child.type == "import":
+                    found_import_keyword = True
+                    continue
+
+                # After finding 'import', collect all dotted_name and identifier nodes
+                if found_import_keyword and child.type in ("dotted_name", "identifier"):
                     imported_names.append(child.text.decode('utf-8'))
 
             return {

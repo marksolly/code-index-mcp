@@ -285,6 +285,8 @@ class BaseInstantiationHandler(BaseRelationshipHandler, ABC):
         if relationships_created:
             self.logger.log(self.__class__.__name__,
                 f"DEBUG: Created {len(relationships_created)} low-confidence instantiation relationships for {target_name}")
+            # Delete the unresolved relationship since we created resolved relationships
+            writer.delete_unresolved_relationship(rel['id'])
             return relationships_created[0]  # Return first one for compatibility
         else:
             self.logger.log(self.__class__.__name__,
