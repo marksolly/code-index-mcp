@@ -24,9 +24,16 @@ class IndexingOrchestrator:
         self.symbol_extractor_classes: Dict[str, Type[BaseSymbolExtractor]] = {}
         self.language_definitions: Dict[str, LanguageDefinition] = self._discover_language_definitions()
 
+        # Determine base package dynamically from our own __name__
+        self.base_package = '.'.join(__name__.split('.')[:-1])
+
         # Cache tree-sitter parsers and language objects for efficiency
         self.parsers: Dict[str, Any] = {}
         self.language_objects: Dict[str, Any] = {}
+
+    def _get_package_name(self, subpackage: str) -> str:
+        """Build package name relative to our base package."""
+        return f"{self.base_package}.{subpackage}"
 
     def _discover_language_definitions(self) -> Dict[str, LanguageDefinition]:
         definitions = {}
@@ -61,7 +68,7 @@ class IndexingOrchestrator:
             try:
                 # Use filesystem-based discovery (same as relationship handlers)
                 package_path = Path(__file__).parent / "symbol_extractors"
-                package_name = "src.code_index_mcp.indexing.symbol_extractors"
+                package_name = self._get_package_name("symbol_extractors")
 
                 for _, module_name, _ in pkgutil.iter_modules([str(package_path)]):
                     # Check if this module matches the expected language pattern
@@ -233,7 +240,7 @@ class IndexingOrchestrator:
         if not package_path.is_dir():
             return
 
-        package_name = f"src.code_index_mcp.indexing.relationship_handlers.{language_or_common}"
+        package_name = self._get_package_name(f"relationship_handlers.{language_or_common}")
 
         for _, module_name, _ in pkgutil.iter_modules([str(package_path)]):
             try:
