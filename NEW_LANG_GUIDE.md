@@ -140,6 +140,10 @@ class GoLanguageDefinition(LanguageDefinition):
         return "go"
 
     @property
+    def file_extensions(self) -> List[str]:
+        return [".go"]
+
+    @property
     def supported_symbol_types(self) -> List[str]:
         return [
             "file",
