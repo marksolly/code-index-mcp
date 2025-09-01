@@ -45,17 +45,22 @@ class SymbolFinder:
         """
         Find code symbols matching the given pattern and return a formatted summary.
 
+        This method fetches one extra record beyond the specified limit to detect
+        if more results are available. If the limit is exceeded, a warning message
+        is displayed at the end of the output indicating that more results exist.
+
         Args:
             pattern: The main search string for the symbol name.
             match_mode: Defines how the pattern is interpreted ('glob' or 'regex').
             case_sensitive: Determines if pattern matching should be case-sensitive.
             symbol_type: Filters search to specific symbol types (e.g., 'function', 'class').
             path_pattern: Glob pattern to restrict search to specific files/directories.
-            limit: Maximum number of matching symbols to return.
+            limit: Maximum number of matching symbols to return in the output.
             include_context: Specifies which contextual information to include.
 
         Returns:
-            A formatted string with search results.
+            A formatted string with search results. If more than 'limit' results
+            are found, a warning message is appended to the output.
 
         Raises:
             ValueError: If parameters are invalid or database operations fail
@@ -121,7 +126,7 @@ class SymbolFinder:
                 params.append(path_like_pattern)
 
             base_query += " LIMIT ?"
-            params.append(limit)
+            params.append(limit + 1)
 
             cursor = conn.cursor()
             cursor.execute(base_query, params)
@@ -130,6 +135,11 @@ class SymbolFinder:
             if not symbols_data:
                 return "No symbols found matching your criteria."
 
+            # Check if limit was exceeded (we fetched limit + 1)
+            limit_exceeded = len(symbols_data) > limit
+            if limit_exceeded:
+                symbols_data = symbols_data[:limit]  # Truncate to original limit
+
             # Fetch context if needed
             symbol_ids = [str(row['id']) for row in symbols_data]
             placeholders = ','.join(['?'] * len(symbol_ids))
@@ -137,6 +147,54 @@ class SymbolFinder:
             properties_map = {}
             relationships_map = {'incoming': {}, 'outgoing': {}}
 
+            # Always fetch relationships since functions and methods always need them
+            rel_query = f"""
+                SELECT r.source_symbol_id, r.target_symbol_id, rt.name as rel_type,
+                       r.confidence, s_target.name as target_name,
+                       s_target.type_id as target_type_id,
+                       st_target.name as target_symbol_type
+                FROM relationships r
+                JOIN relationship_types rt ON r.type_id = rt.id
+                JOIN code_symbols s_target ON r.target_symbol_id = s_target.id
+                JOIN symbol_types st_target ON s_target.type_id = st_target.id
+                WHERE r.source_symbol_id IN ({placeholders})
+            """
+            cursor.execute(rel_query, symbol_ids)
+            for row in cursor.fetchall():
+                source_id = row['source_symbol_id']
+                if source_id not in relationships_map['outgoing']:
+                    relationships_map['outgoing'][source_id] = []
+                relationships_map['outgoing'][source_id].append({
+                    'type': row['rel_type'],
+                    'target_name': row['target_name'],
+                    'target_type': row['target_symbol_type'],
+                    'confidence': row['confidence']
+                })
+
+            inv_rel_query = f"""
+                SELECT r.target_symbol_id, r.source_symbol_id, rt.name as rel_type,
+                       r.confidence, s_source.name as source_name,
+                       s_source.type_id as source_type_id,
+                       st_source.name as source_symbol_type
+                FROM relationships r
+                JOIN relationship_types rt ON r.type_id = rt.id
+                JOIN code_symbols s_source ON r.source_symbol_id = s_source.id
+                JOIN symbol_types st_source ON s_source.type_id = st_source.id
+                WHERE r.target_symbol_id IN ({placeholders})
+            """
+            cursor.execute(inv_rel_query, symbol_ids)
+            for row in cursor.fetchall():
+                target_id = row['target_symbol_id']
+                if target_id not in relationships_map['incoming']:
+                    relationships_map['incoming'][target_id] = []
+                relationships_map['incoming'][target_id].append({
+                    'type': row['rel_type'],
+                    'source_name': row['source_name'],
+                    'source_type': row['source_symbol_type'],
+                    'confidence': row['confidence']
+                })
+
+            # Only fetch properties if needed
             if 'all' in include_context or 'properties' in include_context:
                 prop_query = f"""
                     SELECT symbol_id, key, value
@@ -148,53 +206,6 @@ class SymbolFinder:
                     if row['symbol_id'] not in properties_map:
                         properties_map[row['symbol_id']] = {}
                     properties_map[row['symbol_id']][row['key']] = row['value']
-
-            if 'all' in include_context or 'relationships' in include_context:
-                rel_query = f"""
-                    SELECT r.source_symbol_id, r.target_symbol_id, rt.name as rel_type,
-                           r.confidence, s_target.name as target_name,
-                           s_target.type_id as target_type_id,
-                           st_target.name as target_symbol_type
-                    FROM relationships r
-                    JOIN relationship_types rt ON r.type_id = rt.id
-                    JOIN code_symbols s_target ON r.target_symbol_id = s_target.id
-                    JOIN symbol_types st_target ON s_target.type_id = st_target.id
-                    WHERE r.source_symbol_id IN ({placeholders})
-                """
-                cursor.execute(rel_query, symbol_ids)
-                for row in cursor.fetchall():
-                    source_id = row['source_symbol_id']
-                    if source_id not in relationships_map['outgoing']:
-                        relationships_map['outgoing'][source_id] = []
-                    relationships_map['outgoing'][source_id].append({
-                        'type': row['rel_type'],
-                        'target_name': row['target_name'],
-                        'target_type': row['target_symbol_type'],
-                        'confidence': row['confidence']
-                    })
-
-                inv_rel_query = f"""
-                    SELECT r.target_symbol_id, r.source_symbol_id, rt.name as rel_type,
-                           r.confidence, s_source.name as source_name,
-                           s_source.type_id as source_type_id,
-                           st_source.name as source_symbol_type
-                    FROM relationships r
-                    JOIN relationship_types rt ON r.type_id = rt.id
-                    JOIN code_symbols s_source ON r.source_symbol_id = s_source.id
-                    JOIN symbol_types st_source ON s_source.type_id = st_source.id
-                    WHERE r.target_symbol_id IN ({placeholders})
-                """
-                cursor.execute(inv_rel_query, symbol_ids)
-                for row in cursor.fetchall():
-                    target_id = row['target_symbol_id']
-                    if target_id not in relationships_map['incoming']:
-                        relationships_map['incoming'][target_id] = []
-                    relationships_map['incoming'][target_id].append({
-                        'type': row['rel_type'],
-                        'source_name': row['source_name'],
-                        'source_type': row['source_symbol_type'],
-                        'confidence': row['confidence']
-                    })
 
             # Format output
             for row in symbols_data:
@@ -230,6 +241,51 @@ class SymbolFinder:
                         for s_type, names in contains_groups.items():
                             output_lines.append(f"    - {s_type}: {', '.join(names)}")
 
+                    # Query for files that import symbols from this file
+                    imports_query = """
+                        SELECT DISTINCT f_source.path as importing_file_path
+                        FROM relationships r
+                        JOIN relationship_types rt ON r.type_id = rt.id
+                        JOIN code_symbols s_source ON r.source_symbol_id = s_source.id
+                        JOIN files f_source ON s_source.file_id = f_source.id
+                        WHERE r.target_symbol_id IN (
+                            SELECT cs.id FROM code_symbols cs WHERE cs.file_id = ?
+                        ) AND rt.name = 'imports'
+                        ORDER BY f_source.path
+                    """
+                    cursor.execute(imports_query, (symbol_id,))
+                    importing_files = cursor.fetchall()
+                    if importing_files:
+                        import_paths = [row['importing_file_path'] for row in importing_files]
+                        output_lines.append("  - Imported by:")
+                        for path in import_paths:
+                            output_lines.append(f"    - {path}")
+
+                elif symbol_type_display == 'class':
+                    # Query for methods and other symbols declared by this class
+                    declares_query = """
+                        SELECT s_target.name, st_target.name as symbol_type
+                        FROM relationships r
+                        JOIN relationship_types rt ON r.type_id = rt.id
+                        JOIN code_symbols s_target ON r.target_symbol_id = s_target.id
+                        JOIN symbol_types st_target ON s_target.type_id = st_target.id
+                        WHERE r.source_symbol_id = ? AND rt.name = 'declares_class_method'
+                        ORDER BY st_target.name, s_target.name
+                    """
+                    cursor.execute(declares_query, (symbol_id,))
+                    declared_symbols = cursor.fetchall()
+                    if declared_symbols:
+                        declares_groups = {}
+                        for s in declared_symbols:
+                            s_type = s['symbol_type']
+                            if s_type not in declares_groups:
+                                declares_groups[s_type] = []
+                            declares_groups[s_type].append(s['name'])
+
+                        output_lines.append("  - Defines:")
+                        for s_type, names in declares_groups.items():
+                            output_lines.append(f"    - {s_type}: {', '.join(names)}")
+
                 if ('all' in include_context or 'location' in include_context) and symbol_type_display != 'file':
                     output_lines.append(f"  |> in: {file_path}" + (f" (lines {line_start}-{line_end})" if line_start and line_end else ""))
 
@@ -243,7 +299,11 @@ class SymbolFinder:
                             except json.JSONDecodeError:
                                 output_lines.append(f"  - {key}: {value}")
 
-                if 'all' in include_context or 'relationships' in include_context:
+                # Always include relationships for functions and methods
+                show_relationships = ('all' in include_context or 'relationships' in include_context or
+                                    symbol_type_display in ['function', 'method'])
+
+                if show_relationships:
                     if symbol_id in relationships_map['outgoing']:
                         rel_groups = {}
                         for rel in relationships_map['outgoing'][symbol_id]:
@@ -283,6 +343,10 @@ class SymbolFinder:
 
         except sqlite3.Error as e:
             raise ValueError(f"Database error: {e}") from e
+
+        # Add warning at the end if limit was exceeded
+        if limit_exceeded:
+            output_lines.append(f"Warning: Output truncated to first {limit} results.")
 
         return "\n".join(output_lines).strip()
 
