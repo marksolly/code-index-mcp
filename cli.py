@@ -134,12 +134,18 @@ def cmd_index(args):
         print("No files found to index")
         return 0
 
-    # Setup orchestrator with filters to show useful progress without too much noise
+    # Setup orchestrator with profiling if requested
     logger_filters = {
         'component_names' : ['Orchestrator']
     }
     logger = IndexingLogger(enabled=True, filters=logger_filters)
-    orchestrator = IndexingOrchestrator(str(target_dir), db_service.get_connection(), logger)
+
+    # Enable profiling if requested
+    if args.profile:
+        logger.enable_profiling()
+        print("🔍 Profiling enabled - will show detailed performance metrics")
+
+    orchestrator = IndexingOrchestrator(str(target_dir), db_service, logger)
 
     # Process files
     print("Starting indexing process...")
@@ -191,6 +197,7 @@ def cmd_query(args):
             case_sensitive=args.case_sensitive,
             symbol_type=symbol_type,
             path_pattern=args.path_pattern,
+            language=args.language,
             limit=args.limit,
             include_context=include_context
         )
@@ -232,6 +239,7 @@ Examples:
     index_parser = subparsers.add_parser('index', help='Index a directory')
     index_parser.add_argument('directory', help='Directory to index')
     index_parser.add_argument('--db-path', help='Path to database file (default: code_index.db)')
+    index_parser.add_argument('--profile', action='store_true', help='Enable profiling to measure database vs total indexing time')
     index_parser.set_defaults(func=cmd_index)
 
     # Query command
@@ -245,6 +253,7 @@ Examples:
     query_parser.add_argument('--symbol-type', action='append',
                              help='Filter by symbol type (can be used multiple times)')
     query_parser.add_argument('--path-pattern', help='Filter by file path pattern')
+    query_parser.add_argument('--language', help='Filter by programming language (e.g., python, javascript)')
     query_parser.add_argument('--limit', type=int, default=50,
                              help='Maximum number of results (default: 50)')
     query_parser.add_argument('--include-context', action='append',

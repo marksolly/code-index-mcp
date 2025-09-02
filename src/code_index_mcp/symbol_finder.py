@@ -39,6 +39,7 @@ class SymbolFinder:
         case_sensitive: bool = False,
         symbol_type: Optional[List[str] | str] = None,
         path_pattern: Optional[str] = None,
+        language: Optional[str] = None,
         limit: int = 50,
         include_context: List[str] = None
     ) -> str:
@@ -55,6 +56,7 @@ class SymbolFinder:
             case_sensitive: Determines if pattern matching should be case-sensitive.
             symbol_type: Filters search to specific symbol types (e.g., 'function', 'class').
             path_pattern: Glob pattern to restrict search to specific files/directories.
+            language: Programming language to filter by (e.g., 'python', 'javascript').
             limit: Maximum number of matching symbols to return in the output.
             include_context: Specifies which contextual information to include.
 
@@ -66,7 +68,7 @@ class SymbolFinder:
             ValueError: If parameters are invalid or database operations fail
         """
         # Validate inputs
-        self._validate_parameters(pattern, match_mode, path_pattern)
+        self._validate_parameters(pattern, match_mode, path_pattern, language)
 
         if include_context is None:
             include_context = ['all']
@@ -124,6 +126,11 @@ class SymbolFinder:
                 path_like_pattern = path_pattern.replace('*', '%').replace('?', '_')
                 base_query += " AND f.path LIKE ?"
                 params.append(path_like_pattern)
+
+            # Add language filter
+            if language:
+                base_query += " AND f.language = ?"
+                params.append(language)
 
             base_query += " LIMIT ?"
             params.append(limit + 1)
@@ -350,7 +357,7 @@ class SymbolFinder:
 
         return "\n".join(output_lines).strip()
 
-    def _validate_parameters(self, pattern: str, match_mode: str, path_pattern: Optional[str]) -> None:
+    def _validate_parameters(self, pattern: str, match_mode: str, path_pattern: Optional[str], language: Optional[str] = None) -> None:
         """
         Validate input parameters.
 
@@ -358,6 +365,7 @@ class SymbolFinder:
             pattern: Search pattern to validate
             match_mode: Match mode to validate
             path_pattern: Path pattern to validate (optional)
+            language: Language to validate (optional)
 
         Raises:
             ValueError: If any parameter is invalid
@@ -380,6 +388,12 @@ class SymbolFinder:
             error = self._validate_glob_pattern(path_pattern)
             if error:
                 raise ValueError(f"Invalid path pattern: {error}")
+
+        # Validate language if provided
+        if language:
+            error = self._validate_language(language)
+            if error:
+                raise ValueError(f"Invalid language: {error}")
 
     def _validate_search_pattern(self, pattern: str) -> Optional[str]:
         """
@@ -419,5 +433,25 @@ class SymbolFinder:
             fnmatch.translate(pattern)
         except (ValueError, TypeError) as e:
             return f"Invalid glob pattern: {str(e)}"
+
+        return None
+
+    def _validate_language(self, language: str) -> Optional[str]:
+        """
+        Validate a programming language.
+
+        Args:
+            language: The language to validate
+
+        Returns:
+            Error message if validation fails, None if valid
+        """
+        if not language:
+            return "Language cannot be empty"
+
+        # Basic validation - could be expanded with a list of supported languages
+        # For now, just ensure it's a non-empty string
+        if not isinstance(language, str):
+            return "Language must be a string"
 
         return None
