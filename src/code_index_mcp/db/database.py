@@ -247,7 +247,9 @@ class DatabaseService:
             """
             CREATE TABLE IF NOT EXISTS relationship_types (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL UNIQUE
+                name TEXT NOT NULL UNIQUE,
+                outbound_display TEXT,
+                inbound_display TEXT
             );
             """,
             """
@@ -319,13 +321,33 @@ class DatabaseService:
 
         # Pre-populate lookup tables
         symbol_types = ['file', 'function', 'class', 'method', 'constant', 'import', 'global', 'variable', 'export', 'namespace']
-        relationship_types = ['calls_file_function', 'calls_class_method', 'imports', 'inherits', 'instantiates', 'declares_file_function', 'declares_class_method', 'declares_class', 'declares_constant', 'references_variable', 'overrides', 'defines_namespace', 'is_instance_of']
+
+        # Relationship types with display names for reports
+        # Format: (name, outbound_display, inbound_display)
+        relationship_type_data = [
+            ('calls_file_function',     'calls',        'called_by'),
+            ('calls_class_method',      'calls',        'called_by'),
+            ('imports',                 'imports',      'imported_by'),
+            ('inherits',                'inherits',     'inherited_by'),
+            ('instantiates',            'instantiates', 'instantiated_by'),
+            ('declares_file_function',  'declares',     'declared_by'),
+            ('declares_class_method',   'declares',     'declared_by'),
+            ('declares_class',          'declares',     'declared_by'),
+            ('declares_constant',       'declares',     'declared_by'),
+            ('references_variable',     'references',   'referenced_by'),
+            ('overrides',               'overrides',    'overridden_by'),
+            ('defines_namespace',       'defines',      'defined_by'),
+            ('is_instance_of',          'is_instance_of', 'has_instance')
+        ]
 
         for s_type in symbol_types:
             cursor.execute("INSERT OR IGNORE INTO symbol_types (name) VALUES (?)", (s_type,))
 
-        for r_type in relationship_types:
-            cursor.execute("INSERT OR IGNORE INTO relationship_types (name) VALUES (?)", (r_type,))
+        for name, outbound_display, inbound_display in relationship_type_data:
+            cursor.execute("""
+                INSERT OR IGNORE INTO relationship_types (name, outbound_display, inbound_display)
+                VALUES (?, ?, ?)
+            """, (name, outbound_display, inbound_display))
 
         # Clear unresolved relationships from previous runs
         cursor.execute("DELETE FROM unresolved_relationships;")

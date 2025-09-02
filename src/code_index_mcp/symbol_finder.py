@@ -150,6 +150,7 @@ class SymbolFinder:
             # Always fetch relationships since functions and methods always need them
             rel_query = f"""
                 SELECT r.source_symbol_id, r.target_symbol_id, rt.name as rel_type,
+                       rt.outbound_display as display_rel_type,
                        r.confidence, s_target.name as target_name,
                        s_target.type_id as target_type_id,
                        st_target.name as target_symbol_type
@@ -166,6 +167,7 @@ class SymbolFinder:
                     relationships_map['outgoing'][source_id] = []
                 relationships_map['outgoing'][source_id].append({
                     'type': row['rel_type'],
+                    'display_type': row['display_rel_type'] or row['rel_type'],  # Fallback to original if display is null
                     'target_name': row['target_name'],
                     'target_type': row['target_symbol_type'],
                     'confidence': row['confidence']
@@ -173,6 +175,7 @@ class SymbolFinder:
 
             inv_rel_query = f"""
                 SELECT r.target_symbol_id, r.source_symbol_id, rt.name as rel_type,
+                       rt.inbound_display as display_rel_type,
                        r.confidence, s_source.name as source_name,
                        s_source.type_id as source_type_id,
                        st_source.name as source_symbol_type
@@ -189,6 +192,7 @@ class SymbolFinder:
                     relationships_map['incoming'][target_id] = []
                 relationships_map['incoming'][target_id].append({
                     'type': row['rel_type'],
+                    'display_type': row['display_rel_type'] or row['rel_type'],  # Fallback to original if display is null
                     'source_name': row['source_name'],
                     'source_type': row['source_symbol_type'],
                     'confidence': row['confidence']
@@ -282,12 +286,12 @@ class SymbolFinder:
                                 declares_groups[s_type] = []
                             declares_groups[s_type].append(s['name'])
 
-                        output_lines.append("  - Defines:")
+                        output_lines.append("  Defines:")
                         for s_type, names in declares_groups.items():
-                            output_lines.append(f"    - {s_type}: {', '.join(names)}")
+                            output_lines.append(f"    {s_type}: {', '.join(names)}")
 
                 if ('all' in include_context or 'location' in include_context) and symbol_type_display != 'file':
-                    output_lines.append(f"  |> in: {file_path}" + (f" (lines {line_start}-{line_end})" if line_start and line_end else ""))
+                    output_lines.append(f"  in: {file_path}" + (f" (lines {line_start}-{line_end})" if line_start and line_end else ""))
 
                 if 'all' in include_context or 'properties' in include_context:
                     if symbol_id in properties_map:
@@ -307,27 +311,23 @@ class SymbolFinder:
                     if symbol_id in relationships_map['outgoing']:
                         rel_groups = {}
                         for rel in relationships_map['outgoing'][symbol_id]:
-                            rel_type = rel['type']
-                            if rel_type not in rel_groups:
-                                rel_groups[rel_type] = []
+                            display_rel_type = rel.get('display_type', rel['type'])
+                            if display_rel_type not in rel_groups:
+                                rel_groups[display_rel_type] = []
 
                             confidence_marker = " ?" if rel.get('confidence', 1.0) < 0.5 else ""
-                            rel_groups[rel_type].append(f"{rel['target_name']}{confidence_marker}")
+                            rel_groups[display_rel_type].append(f"{rel['target_name']}{confidence_marker}")
 
                         for rel_type, targets in rel_groups.items():
-                            output_lines.append(f"  -> {rel_type}: {', '.join(targets)}")
+                            output_lines.append(f"  {rel_type}: {', '.join(targets)}")
 
                     if symbol_id in relationships_map['incoming']:
                         rel_groups = {}
                         for rel in relationships_map['incoming'][symbol_id]:
-                            rel_type = rel['type']
+                            display_rel_type = rel.get('display_type', rel['type'])
 
-                            display_rel_type = rel_type
-                            if rel_type == 'calls':
-                                display_rel_type = 'called_by'
-                            elif rel_type == 'instantiates':
-                                display_rel_type = 'instantiated_by'
-                            elif rel_type in ['inherits', 'declares_class_method']:
+                            # Skip certain relationship types for inbound display
+                            if rel['type'] in ['inherits', 'declares_class_method']:
                                 continue
 
                             if display_rel_type not in rel_groups:
@@ -337,7 +337,7 @@ class SymbolFinder:
                             rel_groups[display_rel_type].append(f"{rel['source_name']}{confidence_marker}")
 
                         for rel_type, sources in rel_groups.items():
-                            output_lines.append(f"  <- {rel_type}: {', '.join(sources)}")
+                            output_lines.append(f"  {rel_type}: {', '.join(sources)}")
 
                 output_lines.append("") # Add a blank line for readability
 
