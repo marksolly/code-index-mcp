@@ -325,19 +325,19 @@ class DatabaseService:
         # Relationship types with display names for reports
         # Format: (name, outbound_display, inbound_display)
         relationship_type_data = [
-            ('calls_file_function',     'calls',        'called_by'),
-            ('calls_class_method',      'calls',        'called_by'),
-            ('imports',                 'imports',      'imported_by'),
-            ('inherits',                'inherits',     'inherited_by'),
-            ('instantiates',            'instantiates', 'instantiated_by'),
-            ('declares_file_function',  'declares',     'declared_by'),
-            ('declares_class_method',   'declares',     'declared_by'),
-            ('declares_class',          'declares',     'declared_by'),
-            ('declares_constant',       'declares',     'declared_by'),
-            ('references_variable',     'references',   'referenced_by'),
-            ('overrides',               'overrides',    'overridden_by'),
-            ('defines_namespace',       'defines',      'defined_by'),
-            ('is_instance_of',          'is_instance_of', 'has_instance')
+            ('calls_file_function',     'calls',           'called_by'),
+            ('calls_class_method',      'calls',           'called_by'),
+            ('imports',                 'imports',         'imported_by'),
+            ('inherits',                'inherits',        'inherited_by'),
+            ('instantiates',            'instantiates',    'instantiated_by'),
+            ('declares_file_function',  'defines_fn',      'defined_in'),
+            ('declares_class_method',   'has_method',      'declared_by'),
+            ('declares_class',          'declares',        'declared_by'),
+            ('declares_constant',       'declares',        'declared_by'),
+            ('references_variable',     'references',      'referenced_by'),
+            ('overrides',               'overrides',       'overridden_by'),
+            ('defines_namespace',       'defines',         'defined_by'),
+            ('is_instance_of',          'is_instance_of',  'has_instance')
         ]
 
         for s_type in symbol_types:

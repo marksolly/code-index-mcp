@@ -132,6 +132,7 @@ class SymbolFinder:
                 base_query += " AND f.language = ?"
                 params.append(language)
 
+            base_query += " ORDER BY f.language, st.name, cs.name"
             base_query += " LIMIT ?"
             params.append(limit + 1)
 
@@ -159,6 +160,7 @@ class SymbolFinder:
                 SELECT r.source_symbol_id, r.target_symbol_id, rt.name as rel_type,
                        rt.outbound_display as display_rel_type,
                        r.confidence, s_target.name as target_name,
+                       s_target.qname as target_qname,
                        s_target.type_id as target_type_id,
                        st_target.name as target_symbol_type
                 FROM relationships r
@@ -176,7 +178,9 @@ class SymbolFinder:
                     'type': row['rel_type'],
                     'display_type': row['display_rel_type'] or row['rel_type'],  # Fallback to original if display is null
                     'target_name': row['target_name'],
+                    'target_qname': row['target_qname'],
                     'target_type': row['target_symbol_type'],
+                    'target_symbol_id': row['target_symbol_id'],
                     'confidence': row['confidence']
                 })
 
@@ -184,6 +188,7 @@ class SymbolFinder:
                 SELECT r.target_symbol_id, r.source_symbol_id, rt.name as rel_type,
                        rt.inbound_display as display_rel_type,
                        r.confidence, s_source.name as source_name,
+                       s_source.qname as source_qname,
                        s_source.type_id as source_type_id,
                        st_source.name as source_symbol_type
                 FROM relationships r
@@ -201,7 +206,9 @@ class SymbolFinder:
                     'type': row['rel_type'],
                     'display_type': row['display_rel_type'] or row['rel_type'],  # Fallback to original if display is null
                     'source_name': row['source_name'],
+                    'source_qname': row['source_qname'],
                     'source_type': row['source_symbol_type'],
+                    'source_symbol_id': row['source_symbol_id'],
                     'confidence': row['confidence']
                 })
 
@@ -227,75 +234,20 @@ class SymbolFinder:
                 line_start = row['line_start']
                 line_end = row['line_end']
 
-                output_lines.append(f"[{symbol_type_display}] {symbol_name}")
+                # For method symbols, include the class name if available
+                display_name = symbol_name
+                if symbol_type_display == 'method':
+                    # Check for incoming 'declares_class_method' relationship to find the class
+                    if symbol_id in relationships_map['incoming']:
+                        for rel in relationships_map['incoming'][symbol_id]:
+                            if rel['type'] == 'declares_class_method':
+                                display_name = f"{rel['source_name']}.{symbol_name}"
+                                break
 
-                if symbol_type_display == 'file':
-                    contains_query = """
-                        SELECT cs.name, st.name as symbol_type
-                        FROM code_symbols cs
-                        JOIN symbol_types st ON cs.type_id = st.id
-                        WHERE cs.file_id = (SELECT id FROM files WHERE path = ?)
-                          AND cs.id != ?
-                        ORDER BY st.name, cs.name
-                    """
-                    cursor.execute(contains_query, (file_path, symbol_id))
-                    contained_symbols = cursor.fetchall()
-                    if contained_symbols:
-                        contains_groups = {}
-                        for s in contained_symbols:
-                            s_type = s['symbol_type']
-                            if s_type not in contains_groups:
-                                contains_groups[s_type] = []
-                            contains_groups[s_type].append(s['name'])
+                output_lines.append(f"[{symbol_type_display}] {display_name}")
 
-                        output_lines.append("  - Contains:")
-                        for s_type, names in contains_groups.items():
-                            output_lines.append(f"    - {s_type}: {', '.join(names)}")
-
-                    # Query for files that import symbols from this file
-                    imports_query = """
-                        SELECT DISTINCT f_source.path as importing_file_path
-                        FROM relationships r
-                        JOIN relationship_types rt ON r.type_id = rt.id
-                        JOIN code_symbols s_source ON r.source_symbol_id = s_source.id
-                        JOIN files f_source ON s_source.file_id = f_source.id
-                        WHERE r.target_symbol_id IN (
-                            SELECT cs.id FROM code_symbols cs WHERE cs.file_id = ?
-                        ) AND rt.name = 'imports'
-                        ORDER BY f_source.path
-                    """
-                    cursor.execute(imports_query, (symbol_id,))
-                    importing_files = cursor.fetchall()
-                    if importing_files:
-                        import_paths = [row['importing_file_path'] for row in importing_files]
-                        output_lines.append("  - Imported by:")
-                        for path in import_paths:
-                            output_lines.append(f"    - {path}")
-
-                elif symbol_type_display == 'class':
-                    # Query for methods and other symbols declared by this class
-                    declares_query = """
-                        SELECT s_target.name, st_target.name as symbol_type
-                        FROM relationships r
-                        JOIN relationship_types rt ON r.type_id = rt.id
-                        JOIN code_symbols s_target ON r.target_symbol_id = s_target.id
-                        JOIN symbol_types st_target ON s_target.type_id = st_target.id
-                        WHERE r.source_symbol_id = ? AND rt.name = 'declares_class_method'
-                        ORDER BY st_target.name, s_target.name
-                    """
-                    cursor.execute(declares_query, (symbol_id,))
-                    declared_symbols = cursor.fetchall()
-                    if declared_symbols:
-                        declares_groups = {}
-                        for s in declared_symbols:
-                            s_type = s['symbol_type']
-                            if s_type not in declares_groups:
-                                declares_groups[s_type] = []
-                            declares_groups[s_type].append(s['name'])
-
-                        output_lines.append("  Defines:")
-                        for s_type, names in declares_groups.items():
-                            output_lines.append(f"    {s_type}: {', '.join(names)}")
+                # File symbols now handled consistently through relationships like other symbol types
+                # Class symbols also handled through relationships for consistency
 
                 if ('all' in include_context or 'location' in include_context) and symbol_type_display != 'file':
                     output_lines.append(f"  in: {file_path}" + (f" (lines {line_start}-{line_end})" if line_start and line_end else ""))
@@ -323,7 +275,13 @@ class SymbolFinder:
                                 rel_groups[display_rel_type] = []
 
                             confidence_marker = " ?" if rel.get('confidence', 1.0) < 0.5 else ""
-                            rel_groups[display_rel_type].append(f"{rel['target_name']}{confidence_marker}")
+
+                            # For calls relationships, use qualified names from database
+                            if rel.get('type', '').startswith('calls_'):
+                                target_qname = rel.get('target_qname') or rel['target_name']
+                                rel_groups[display_rel_type].append(f"{target_qname}{confidence_marker}")
+                            else:
+                                rel_groups[display_rel_type].append(f"{rel['target_name']}{confidence_marker}")
 
                         for rel_type, targets in rel_groups.items():
                             output_lines.append(f"  {rel_type}: {', '.join(targets)}")
@@ -341,7 +299,13 @@ class SymbolFinder:
                                 rel_groups[display_rel_type] = []
 
                             confidence_marker = " ?" if rel.get('confidence', 1.0) < 0.5 else ""
-                            rel_groups[display_rel_type].append(f"{rel['source_name']}{confidence_marker}")
+
+                            # For called by relationships, use qualified names from database
+                            if rel.get('type', '').startswith('calls_'):
+                                source_qname = rel.get('source_qname') or rel['source_name']
+                                rel_groups[display_rel_type].append(f"{source_qname}{confidence_marker}")
+                            else:
+                                rel_groups[display_rel_type].append(f"{rel['source_name']}{confidence_marker}")
 
                         for rel_type, sources in rel_groups.items():
                             output_lines.append(f"  {rel_type}: {', '.join(sources)}")

@@ -119,7 +119,7 @@ class TestLanguageSupportSuite(unittest.TestCase):
             if len(filters) > 1:  # More than just language filter
                 logger = IndexingLogger(enabled=True, filters=filters)
 
-        orchestrator = IndexingOrchestrator(project_root, cls.db_service.get_connection(), logger)
+        orchestrator = IndexingOrchestrator(project_root, cls.db_service, logger)
 
         files_to_index = []
         language_to_test = cls.language_to_test
