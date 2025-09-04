@@ -30,9 +30,6 @@ class LanguageDefinition(ABC):
         """A list of relationship types supported by the language."""
         pass
 
-    # REMOVED: uses_generic_handlers property is no longer needed
-    # The orchestrator now discovers concrete handlers from language directories only
-
 class PythonLanguageDefinition(LanguageDefinition):
     @property
     def language_name(self) -> str:

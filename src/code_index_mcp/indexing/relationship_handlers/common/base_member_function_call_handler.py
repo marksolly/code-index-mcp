@@ -287,11 +287,15 @@ class BaseMemberFunctionCallHandler(BaseRelationshipHandler, ABC):
         """
         Find a method call on an instance variable (e.g., self.engine.start_engine()).
 
+        This method handles complex expressions like self.Timing_data[operation].append()
+        by simplifying them to their base form (self.Timing_data) before processing.
+        This prevents invalid qname creation that would violate the IndexReader validation.
+
         This is generic logic that works across languages.
 
         Args:
             intermediate_qname: The full intermediate qname (e.g., "self.engine.start_engine")
-            object_name: The object name (e.g., "self.engine")
+            object_name: The object name (e.g., "self.engine" or "self.Timing_data[operation]")
             method_name: The method name (e.g., "start_engine")
             source_qname: The qname of the calling method (e.g., "Car.drive")
             reader: IndexReader instance
@@ -300,6 +304,14 @@ class BaseMemberFunctionCallHandler(BaseRelationshipHandler, ABC):
             Symbol dict if found, None otherwise
         """
         self.logger.log(self.__class__.__name__, f"DEBUG: Looking for instance variable method '{object_name}.{method_name}' (from {source_qname})")
+
+        # BUG FIX: Handle complex expressions by simplifying them to base form
+        # This prevents creation of invalid qnames like "Timing_data[operation].append"
+        # which would fail IndexReader validation and crash the indexer.
+        if self._is_complex_expression(object_name):
+            simplified_object_name = self._simplify_complex_expression(object_name)
+            self.logger.log(self.__class__.__name__, f"DEBUG: Simplified complex expression '{object_name}' to '{simplified_object_name}'")
+            object_name = simplified_object_name
 
         # Extract the instance variable name (e.g., "self.engine" -> "engine")
         if not object_name.startswith('self.'):
@@ -333,6 +345,56 @@ class BaseMemberFunctionCallHandler(BaseRelationshipHandler, ABC):
         else:
             self.logger.log(self.__class__.__name__, f"DEBUG: No methods found with name '{method_name}'")
             return None
+
+    def _is_complex_expression(self, expression: str) -> bool:
+        """
+        Check if an expression contains complex syntax that needs simplification.
+
+        Args:
+            expression: The expression to check (e.g., "self.Timing_data[operation]")
+
+        Returns:
+            True if the expression contains complex syntax, False otherwise
+        """
+        # Check for common complex syntax patterns
+        complex_chars = ['[', '(', '{', '.']
+        for char in complex_chars:
+            if char in expression:
+                return True
+        return False
+
+    def _simplify_complex_expression(self, complex_expression: str) -> str:
+        """
+        Simplify a complex expression to its base form.
+
+        This extracts the base identifier from complex expressions like:
+        - "self.Timing_data[operation]" → "self.Timing_data"
+        - "self.engine.gear" → "self.engine"
+        - "self.data[key].method" → "self.data"
+
+        Args:
+            complex_expression: The complex expression to simplify
+
+        Returns:
+            The simplified base expression
+        """
+        # Find the first occurrence of complex syntax characters
+        complex_chars = ['[', '(', '{']
+        min_index = len(complex_expression)
+
+        for char in complex_chars:
+            idx = complex_expression.find(char)
+            if idx != -1 and idx < min_index:
+                min_index = idx
+
+        if min_index < len(complex_expression):
+            # Extract the base part before the complex syntax
+            base_expression = complex_expression[:min_index]
+            self.logger.log(self.__class__.__name__, f"DEBUG: Simplified '{complex_expression}' to '{base_expression}'")
+            return base_expression
+        else:
+            # No complex syntax found, return as-is
+            return complex_expression
 
     def _find_object_method(self, intermediate_qname: str, object_name: str, method_name: str, reader: 'IndexReader'):
         """

@@ -1,3 +1,5 @@
+from mypackage.mymodule import MyModuleClass, my_function
+
 MY_CONSTANT1 = "A_CONSTANT_STRING"
 MY_CONSTANT2 = "ANOTHER_CONSTANT_STRING"
 

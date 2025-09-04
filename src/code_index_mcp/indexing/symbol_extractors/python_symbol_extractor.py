@@ -112,9 +112,10 @@ class PythonClassExtractor:
         """Extract inheritance relationships"""
         from tree_sitter import Query
 
-        # Query for base classes in the argument_list
+        # Query specifically for base classes in class_definition superclasses
         inheritance_query = """
-            (argument_list (identifier) @parent)
+            (class_definition
+                superclasses: (argument_list (identifier) @parent))
         """
 
         query = context.language_obj.query(inheritance_query)
