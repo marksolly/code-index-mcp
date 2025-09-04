@@ -17,11 +17,14 @@ from .relationship_handlers.base_relationship_handler import BaseRelationshipHan
 from .symbol_extractors.base_symbol_extractor import BaseSymbolExtractor
 from .timing_utils import time_block
 from .writer import IndexWriter
+from .strict_resolution_validator import StrictResolutionValidator
+from .exceptions import StrictModeViolationException
 
 
 class IndexingOrchestrator:
     def __init__(self, project_root: str, db_service, logger: Optional[IndexingLogger] = None,
-                 catch_exceptions: bool = False, exception_log_file: Optional[str] = None):
+                 catch_exceptions: bool = False, exception_log_file: Optional[str] = None,
+                 strict_resolution: bool = False):
         self.project_root = project_root
         self.logger = logger or IndexingLogger(enabled=False)
         self.ignore_handler = IgnoreHandler(project_root)
@@ -47,6 +50,12 @@ class IndexingOrchestrator:
         self.exception_log_file = exception_log_file
         self.exceptions = []  # RAM storage for exceptions
         self.max_exceptions = 1000  # Prevent OOM with bounded collection
+
+        # Strict resolution mode configuration
+        self.strict_resolution = strict_resolution
+        self.strict_validator = StrictResolutionValidator(
+            self.db_connection, self.logger, strict_resolution
+        )
 
     def _get_package_name(self, subpackage: str) -> str:
         """Build package name relative to our base package."""
@@ -240,6 +249,10 @@ class IndexingOrchestrator:
             summary = self._generate_exception_summary()
             print(summary)
 
+        # Final strict resolution validation - check for any remaining unresolved relationships
+        if self.strict_resolution:
+            self.strict_validator.validate_final_state(self.catch_exceptions)
+
         self.logger.mustLog("Orchestrator", "Completed multi-phase indexing process.")
 
     def run_phase_1_symbol_extraction(self, file_path: str, language: str, source_code: str, writer: IndexWriter):
@@ -303,6 +316,11 @@ class IndexingOrchestrator:
             # Use batching per handler. Some handlers depend on previous handlers in the pipeline.
             with writer.batch_relationships() as batch_writer:
                 handler.resolve_complex(batch_writer, reader)
+
+            # Strict validation: Check if this handler left any unresolved relationships
+            if self.strict_resolution:
+                self.strict_validator.validate_after_handler(handler_class, self.catch_exceptions)
+
         self.logger.mustLogForLang("Orchestrator", f"Phase 3: Final Resolution completed for {language}")
 
 
@@ -389,6 +407,9 @@ class IndexingOrchestrator:
                 del remaining[rel_type]
 
         return sorted_handlers
+
+
+
 
     def _handle_exception(self, phase: str, error: Exception, context: Dict[str, Any]):
         """

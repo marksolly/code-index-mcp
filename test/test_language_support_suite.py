@@ -36,6 +36,7 @@ if project_root not in sys.path:
 from src.code_scope_mcp.db.database import DatabaseService
 from src.code_scope_mcp.indexing.orchestrator import IndexingOrchestrator
 from src.code_scope_mcp.indexing.indexing_logger import IndexingLogger, ComponentRegistry
+from src.code_scope_mcp.indexing.exceptions import StrictModeViolationException
 from test.relationship_verifier import RelationshipVerifier
 from test.lang_definitions.base_test_definition import BaseTestDefinition
 
@@ -119,7 +120,13 @@ class TestLanguageSupportSuite(unittest.TestCase):
             if len(filters) > 1:  # More than just language filter
                 logger = IndexingLogger(enabled=True, filters=filters)
 
-        orchestrator = IndexingOrchestrator(project_root, cls.db_service, logger)
+        # Enable strict resolution mode for tests to catch unresolved relationships (unless disabled)
+        strict_mode = True if not hasattr(cls, 'no_strict_resolution') else not cls.no_strict_resolution
+        orchestrator = IndexingOrchestrator(project_root, cls.db_service, logger,
+                                          strict_resolution=strict_mode, catch_exceptions=False)
+
+        if not strict_mode:
+            print("⚠️  STRICT RESOLUTION MODE DISABLED - unresolved relationships will be ignored")
 
         files_to_index = []
         language_to_test = cls.language_to_test
@@ -136,7 +143,29 @@ class TestLanguageSupportSuite(unittest.TestCase):
                         for file_path, lang, code in definition.get_files_to_index():
                             files_to_index.append((file_path, lang, code))
 
-        orchestrator.process_files(files_to_index)
+        try:
+            orchestrator.process_files(files_to_index)
+        except StrictModeViolationException as e:
+            print(f"\n❌ STRICT MODE VIOLATION CAUGHT DURING INDEXING")
+            print(f"   Message: {e.message}")
+            if e.handler_name:
+                print(f"   Handler: {e.handler_name}")
+
+            # Dump unresolved relationships that are relevant to this exception
+            if e.unresolved_relationships:
+                print(f"\n   📋 UNRESOLVED RELATIONSHIPS ({len(e.unresolved_relationships)} total):")
+                for i, rel_detail in enumerate(e.unresolved_relationships, 1):
+                    print(f"   {i:2d}. {rel_detail}")
+                if len(e.unresolved_relationships) > 10:  # Show summary if many relationships
+                    print(f"   ... and {len(e.unresolved_relationships) - 10} more")
+            else:
+                print("   No unresolved relationship details available")
+
+            # Re-raise the exception to fail the test
+            raise
+        except Exception as e:
+            # Re-raise any other exceptions as-is
+            raise
 
         cls.verifier = RelationshipVerifier(cls.db_service)
 
@@ -318,11 +347,17 @@ def main():
         '--debug-components',
         help="Additional components to enable logging for (comma-separated, e.g., 'PythonImportHandler,JavascriptFileFunctionCallHandler')"
     )
-    
+    parser.add_argument(
+        '--no-strict-resolution',
+        action='store_true',
+        help="Disable strict resolution checks (allow remaining unresolved relationships after Phase 3)"
+    )
+
     args, remaining_argv = parser.parse_known_args()
 
     TestLanguageSupportSuite.auto_debug = args.auto_debug
     TestLanguageSupportSuite.fail_fast = args.failfast
+    TestLanguageSupportSuite.no_strict_resolution = args.no_strict_resolution
 
     # Handle additional debug components from command line
     if args.debug_components:
