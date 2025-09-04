@@ -1,8 +1,8 @@
 # Developer's Guide to Adding a New Language
 
-This guide walks you through adding support for a new language to the code indexer. The architecture is a **phased, strategy-driven pipeline** designed to be highly modular and extensible. You'll add new languages by creating small, focused "relationship handler" components that plug into this pipeline.
+This guide walks you through adding support for a new language to the code indexer. The architecture is a **phased pipeline** designed to be modular and extensible. You'll add new languages by creating focused "relationship handler" and "extractor" components that plug into this pipeline.
 
-The process is entirely test-driven. You will first create tests and code samples, then implement the logic to make the tests pass.
+The development process is entirely test-driven. You will first create tests and code samples, then implement the logic to make the tests pass.
 
 ## Static Analysis Philosophy
 
@@ -77,7 +77,7 @@ IndexingOrchestrator:
   interacts_with:
     - LanguageDefinition
     - YourSymbolExtractor
-    - YourRelationshipHandlers
+    - YourRelationshipHandler
 
 LanguageDefinition:
   description: "A configuration class that defines the properties of a language."
@@ -116,7 +116,7 @@ BaseRelationshipHandler:
 
 Before writing any code, you must **verify the database schema** in `src/code_index_mcp/db/database.py`. Ensure that the symbol and relationship types you plan to index are supported. Proposing new relationship types is a significant architectural change and should be avoided if possible.
 
-Once you have confirmed your approach is compatible with the schema, you must define the language's core properties by creating a `LanguageDefinition` class. This class tells the indexer which symbol and relationship types are supported and, most importantly, allows you to **opt into powerful, pre-built generic analyzers**.
+Once you have confirmed your approach is compatible with the schema, you must define the language's core properties by creating a `LanguageDefinition` class. This class tells the indexer which symbol and relationship types are supported.
 
 -   **Location**: `src/code_index_mcp/indexing/languages.py`
 -   **Action**: Create a new class that inherits from `LanguageDefinition` and implement the abstract properties.
@@ -177,7 +177,7 @@ Before writing any logic, set up the test case for your new language (e.g., "Go"
 3.  **Define Expected Relationships**: In your `GoTestDefinition`, create a method `_define_expected_relationships` that returns a list of all relationships you expect to find.
 4.  **Define Relationship Dependencies**: Your `GoTestDefinition` must have a `relationship_dependencies` property that defines which relationship types must be resolved before others. The system automatically sorts tests based on these dependencies to ensure they run in the correct logical order.
 
-5.  **Enable Relationships Incrementally**: The `supported_relationships` list is automatically generated from your `relationship_dependencies`. The test runner will *only* run tests for the relationship types in this list. To follow a Test-Driven Development (TDD) approach:
+5.  **Enable Relationships Incrementally**: The `relationship_dependencies` property is the primary mechanism for controlling which relationship types are tested. The `supported_relationships` list is automatically generated from your `relationship_dependencies` keys, and the test runner will *only* run tests for the relationship types defined in `relationship_dependencies`. To follow a Test-Driven Development (TDD) approach:
     a. Define all expected relationships in `_define_expected_relationships`.
     b. Define dependencies in `relationship_dependencies`.
     c. Comment out relationship types in `relationship_dependencies` to test incrementally.
@@ -260,33 +260,6 @@ With your test definition in place, you can run the test suite to see the initia
 
 The `--failfast` flag will stop the test run on the first failure, which is useful for focused, iterative development. In addition, when `--failfast` is used it will output additional logging to help diagnose the issue.
 
-### Step 2c: Debugging
-
-When a test fails and `--failfast` is specified, the suite runner provides a detailed log to help you diagnose the issue. Here’s a step-by-step guide to debugging common problems:
-
-1.  **Analyze the Failure**: The traceback will point to the exact assertion that failed. The error message will tell you what relationship was expected and what was actually found (or not found).
-
-2.  **Inspect the Relationship Dump**: The test output includes a (filtered) dump of all incoming and outgoing relationships for the source and target symbols involved in the failed test. This is your primary tool for understanding what the indexer *thinks* is happening.
-
-3.  **Common Issues**:
-    *   **Incorrect Relationships**: If a relationship is missing or incorrect, trace back the logic in your `SymbolExtractor` or `RelationshipAnalyzer`. Are you creating the unresolved relationship correctly? Is your analyzer finding the correct target symbol?
-    *   **Ambiguous Symbols**: If multiple symbols have the same name, the verifier might be picking the wrong one. This can happen if your analyzer's logic for resolving symbols is too simplistic. For example, an `instantiates` analyzer should prioritize imported symbols over symbols with the same name in other files.
-    *   **Qname Mismatches**: Ensure the `qname`s you are creating in your extractor match the format expected by your test definitions.
-
-4.  **Direct Database Inspection**: For complex issues, you can inspect the `test_code_index.db` file directly using a tool like `sqlite3`. This allows you to see the raw data and get a clear picture of what symbols and relationships were created.
-
-It is recommended to join all the tables to produce readable output. Eg:
-```
-sqlite3 test_code_index.db "SELECT s1.name as source_name, s1.qname as source_qname, rt.name as rel_type, s2.name as target_name, s2.qname as target_qname FROM relationships r JOIN code_symbols s1 ON r.source_symbol_id = s1.id JOIN code_symbols s2 ON r.target_symbol_id = s2.id JOIN relationship_types rt ON r.type_id = rt.id ORDER BY source_qname;"
-```
-
-Checking for duplicate relationships:
-```
-sqlite3 test_code_index.db "SELECT f.language, COUNT(*) as count, s1.name as source_name, s1.qname as source_qname, rt.name as rel_type, s2.name as target_name, s2.qname as target_qname FROM relationships r JOIN code_symbols s1 ON r.source_symbol_id = s1.id JOIN code_symbols s2 ON r.target_symbol_id = s2.id JOIN relationship_types rt ON r.type_id = rt.id JOIN files f ON s1.file_id = f.id GROUP BY source_qname, rel_type, target_qname, f.language HAVING COUNT(*) >= 2 ORDER BY source_qname;"
-```
-
-6.  **Logging**: If you need more detailed information, you can add more logging to your extractors and analyzers. The `--failfast` flag will re-run the indexer with more verbose logging for the failed test case. You can also temporarily disable symbol filtering in the logger (`IndexingLogger.filters['symbol_names'] = None`) to see all log messages, though this can be noisy.
-
 ---
 
 ## Step 3: Implement the Symbol Extractor (Phase 1)
@@ -363,7 +336,7 @@ After you have a working `SymbolExtractor`, you can start implementing `Relation
 
 Before writing a new handler, check the `src/code_index_mcp/indexing/relationship_handlers/common/` directory. This directory contains **abstract base classes** (not concrete handlers) that provide reusable logic for common relationship types.
 
-**You should strive to inherit from a base class rather than writing a handler from scratch.** The base classes contain 80-90% of the relationship resolution logic, so you only need to implement 3-5 abstract methods for language-specific AST parsing.
+**You should strive to inherit from a base class rather than writing a handler from scratch.** The base classes contain most of the relationship resolution logic, so you only need to implement 3-5 abstract methods for language-specific AST parsing.
 
 -   **Location**: `src/code_index_mcp/indexing/relationship_handlers/{language}/`
 -   **Naming**: `{Language}{RelationshipType}Handler` (e.g., `GoImportHandler`, `JavaScriptCallHandler`)
@@ -401,6 +374,43 @@ The orchestrator automatically discovers language-specific handlers from the `{l
 
 **Confidence Scoring**: The `IndexWriter.add_relationship` method supports a `confidence` parameter (a float between 0.0 and 1.0). This is useful for handling ambiguity. If a handler cannot uniquely identify a target symbol, it can create multiple low-confidence relationships. For example, if there are three possible target symbols, the handler could create three relationships, each with a confidence of `1/3`. This is a key part of the indexer's "fail-soft" philosophy.
 
+## Debugging
+
+-   **To run the entire suite for all languages:**
+    ```bash
+    uv run python test/test_language_support_suite.py --failfast
+    ```
+
+-   **To run tests for only your new language (e.g., Go):**
+    ```bash
+    uv run python test/test_language_support_suite.py --language=go --failfast
+    ```
+
+The `--failfast` flag will stop the test run on the first failure, which is useful for focused, iterative development. In addition, when `--failfast` specified, the suite runner provides a detailed log to help you diagnose the issue. Here’s a step-by-step guide to debugging common problems:
+
+1.  **Analyze the Failure**: The traceback will point to the exact assertion that failed. The error message will tell you what relationship was expected and what was actually found (or not found).
+
+2.  **Inspect the Relationship Dump**: The test output includes a (filtered) dump of all incoming and outgoing relationships for the source and target symbols involved in the failed test. This is your primary tool for understanding what the indexer *thinks* is happening.
+
+3.  **Common Issues**:
+    *   **Incorrect Relationships**: If a relationship is missing or incorrect, trace back the logic in your `SymbolExtractor` or `RelationshipHandler`. Are you creating the unresolved relationship correctly? Is your handler finding the correct target symbol?
+    *   **Ambiguous Symbols**: If multiple symbols have the same name, does your handler capture the correct one. Or, have you failed to embrace ambiguity and need to create several lower confidence relationships?
+    *   **Qname Mismatches**: Ensure the `qname`s you are creating in your extractor matches the format expected by your test definitions.
+
+4.  **Direct Database Inspection**: For complex issues, you can inspect the `test_code_index.db` file directly using `sqlite` on the command line or `sqlitebrowser` (GUI). This allows you to see the raw data and get a clear picture of what symbols and relationships were created.
+
+This SQL query joins the relationships, code_symbols, and relationship_types tables to show all relationships in a human-readable format, displaying source symbol names/qnames, relationship types, and target symbol names/qnames. The results are ordered by source qname for easier analysis:
+
+```sql
+sqlite3 test_code_index.db "SELECT s1.name as source_name, s1.qname as source_qname, rt.name as rel_type, s2.name as target_name, s2.qname as target_qname FROM relationships r JOIN code_symbols s1 ON r.source_symbol_id = s1.id JOIN code_symbols s2 ON r.target_symbol_id = s2.id JOIN relationship_types rt ON r.type_id = rt.id ORDER BY source_qname;"
+```
+
+Checking for duplicate relationships:
+```sql
+sqlite3 test_code_index.db "SELECT f.language, COUNT(*) as count, s1.name as source_name, s1.qname as source_qname, rt.name as rel_type, s2.name as target_name, s2.qname as target_qname FROM relationships r JOIN code_symbols s1 ON r.source_symbol_id = s1.id JOIN code_symbols s2 ON r.target_symbol_id = s2.id JOIN relationship_types rt ON r.type_id = rt.id JOIN files f ON s1.file_id = f.id GROUP BY source_qname, rel_type, target_qname, f.language HAVING COUNT(*) >= 2 ORDER BY source_qname;"
+```
+
+6.  **Logging**: If you need more detailed information, you can add more logging to your extractors and analyzers. The `--failfast` flag will re-run the indexer with more verbose logging for the failed test case.
 
 ## Notes for LLMs, Agents and Coding Assistants
 Attention: Claude, Cline, Cursor, Grok, Gemini & others.
@@ -410,7 +420,7 @@ Working with this codebase requires having "the big picture" and using all the c
 ### Executing Python Scripts
 
 This project uses a virtual environment which can be activated with:
-`source /<...full path...>/code-index-mcp/.venv/bin/activate`
+`source /<...full path...>/code-scope-mcp/.venv/bin/activate`
 
 This project uses `uv`. Any scripts you run must be invoked with `uv run`.
 
@@ -464,4 +474,4 @@ A plan must include these sections:
         - [ ] Validate with test suite (iteratively)
 
 ### Critical REMINDER
-use `uv run`
+Use `uv run`. Do not attempt to run python directly.

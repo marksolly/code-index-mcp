@@ -1,5 +1,5 @@
 """
-Search service for the Code Index MCP server.
+Search service for the Code Scope MCP server.
 
 This service handles code search operations, search tool management,
 and search strategy selection.
@@ -10,7 +10,7 @@ import json
 from typing import Dict, Any, Optional, List, Tuple
 
 from .base_service import BaseService
-from .database import DatabaseService
+from ..db.database import DatabaseService
 from ..utils import ValidationHelper
 from ..indexing.models import FileInfo, FunctionInfo, ClassInfo, ImportInfo, FileAnalysisResult
 

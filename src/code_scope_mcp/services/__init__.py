@@ -1,5 +1,5 @@
 """
-Service layer for the Code Index MCP server.
+Service layer for the Code Scope MCP server.
 
 This package contains domain-specific services that handle the business logic
 for different areas of functionality:

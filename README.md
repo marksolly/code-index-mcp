@@ -22,6 +22,7 @@ Designed for codebases spanning 100,000+ lines of code and thousands of files.
 ## Table of Contents
 
 - [Overview](#overview)
+- [Interfaces](#interfaces)
 - [Use Cases](#use-cases)
 - [Quick Start](#quick-start)
 - [Usage Examples](#usage-examples)
@@ -37,6 +38,24 @@ Code Scope MCP is a [Model Context Protocol](https://modelcontextprotocol.io) se
 When codebases grow large or when working across multiple repos it can be difficult for AI code assistants to understand the full scope of requests or the full impact of changes they make.
 
 This MCP server maintains an index your code base and makes fast, token efficient, code-graph search and reporting tools available.
+
+## Interfaces
+
+Code Scope provides two ways to access its powerful code indexing capabilities:
+
+### **MCP Server (Primary Interface)**
+- **For AI Coding Assistants**: Designed to be integrated into AI tools like Claude Code and Cline
+- **Contextual Search**: Provides AI assistants with deep code understanding and relationship analysis
+- **Token Efficient**: Delivers comprehensive code insights without burning through token limits
+- **Real-time Analysis**: Helps AI assistants understand code impact before making changes
+
+### **CLI Tool (Direct Access)**
+- **Standalone Usage**: Command-line interface for direct querying of indexed codebases
+- **Same Technology**: Uses the identical indexing engine as the MCP server
+- **Debugging & Analysis**: Useful for manual exploration and troubleshooting
+- **Development**: Helps developers understand their codebase structure
+
+Both interfaces share the same underlying index.
 
 ## Use Cases
 
@@ -149,7 +168,7 @@ For contributing or local development:
 1. **Clone and install:**
 
    ```bash
-   git clone https://github.com/yourusername/code-scope-mcp.git
+   git clone https://github.com/marksolly/code-scope-mcp.git
    cd code-scope-mcp
    uv sync
    ```
@@ -263,6 +282,98 @@ This tool returns a dense, token efficient representation of how the matching sy
 
 By using these `find_symbols` commands, an AI assistant can efficiently guide a user through the codebase, helping them quickly locate relevant classes, functions, and methods based on their specific queries.
 
+### **Self-Analyzing Examples: Code Scope Indexing Itself**
+
+These examples demonstrate the CLI tool analyzing its own codebase, showcasing the same underlying indexing capabilities that power the MCP server. The CLI provides direct access to the technology that enables AI assistants to understand complex codebases with token-efficient, relationship-aware search.
+
+**Why CLI Examples Matter**: The CLI tool uses identical indexing technology as the MCP server, so these examples show the depth of code understanding available to AI assistants through the MCP interface.
+
+#### **Example: Inheritance Hierarchy Analysis**
+
+**Query**: Find all base relationship handler classes
+```bash
+uv run python cli.py query "Base*" --symbol-type class --limit 3
+```
+
+**Result**:
+```text
+[class] BaseFileFunctionCallHandler
+  in: src/code_scope_mcp/indexing/relationship_handlers/common/base_file_function_call_handler.py
+  has_method: __init__, extract_from_ast, _get_function_call_queries, _extract_function_from_node, resolve_immediate, _find_function_through_imports, resolve_complex
+  inherits: BaseRelationshipHandler
+  declared_by: base_file_function_call_handler.py
+  imported_by: file_function_call_handler.py, file_function_call_handler.py, file_function_call_handler.py
+
+[class] BaseImportHandler
+  in: src/code_scope_mcp/indexing/relationship_handlers/common/base_import_handler.py
+  has_method: __init__, extract_from_ast, _get_import_queries, _extract_import_from_node, _convert_module_to_file_path, resolve_immediate, _resolve_import_target, resolve_complex
+  inherits: BaseRelationshipHandler
+  declared_by: base_import_handler.py
+  imported_by: import_handler.py, import_handler.py, import_handler.py
+
+[class] BaseInheritsHandler
+  in: src/code_scope_mcp/indexing/relationship_handlers/common/base_inherits_handler.py
+  has_method: __init__, extract_from_ast, resolve_immediate, _resolve_inheritance_target, resolve_complex, _get_inheritance_symbol_types
+  inherits: BaseRelationshipHandler
+  declared_by: base_inherits_handler.py
+  imported_by: inherits_handler.py, inherits_handler.py, inherits_handler.py
+```
+
+This reveals the correct inheritance hierarchy where multiple specialized handlers inherit from `BaseRelationshipHandler`, showing how the indexing system is architected with proper separation of concerns.
+
+#### **Example: Language Definition Inheritance**
+
+**Query**: Examine language-specific implementations
+```bash
+uv run python cli.py query "*" --symbol-type class --path-pattern "**/languages.py"
+```
+
+**Result**:
+```text
+[class] JavascriptLanguageDefinition
+  in: src/code_scope_mcp/indexing/languages.py
+  has_method: language_name, file_extensions, supported_symbol_types, supported_relationship_types
+  inherits: LanguageDefinition
+  declared_by: languages.py
+
+[class] LanguageDefinition
+  in: src/code_scope_mcp/indexing/languages.py
+  has_method: language_name, file_extensions, supported_symbol_types, supported_relationship_types
+  declared_by: languages.py
+  imported_by: writer.py, orchestrator.py
+
+[class] PhpLanguageDefinition
+  in: src/code_scope_mcp/indexing/languages.py
+  has_method: language_name, file_extensions, supported_symbol_types, supported_relationship_types
+  inherits: LanguageDefinition
+  declared_by: languages.py
+
+[class] PythonLanguageDefinition
+  in: src/code_scope_mcp/indexing/languages.py
+  has_method: language_name, file_extensions, supported_symbol_types, supported_relationship_types
+  inherits: LanguageDefinition
+  declared_by: languages.py
+```
+
+This demonstrates the clean inheritance pattern where language-specific implementations (`JavascriptLanguageDefinition`, `PythonLanguageDefinition`, etc.) properly inherit from the base `LanguageDefinition` class.
+
+#### **Example: Complex Method Orchestration**
+
+**Query**: Analyze the core file processing workflow
+```bash
+uv run python cli.py query "process_files" --symbol-type method --limit 1
+```
+
+**Result**:
+```text
+[method] IndexingOrchestrator.process_files
+  in: src/code_scope_mcp/indexing/orchestrator.py
+  instantiates: IndexWriter, IndexReader, time_block, time_block, time_block
+  calls: IndexingLogger.mustLog, IgnoreHandler.is_ignored, IndexingLogger.mustLog, IndexingLogger.start_timing, IndexingLogger.mustLog, IndexingOrchestrator._get_language_definition, IndexWriter.set_language_definition, IndexingOrchestrator.run_phase_1_symbol_extraction, IndexingOrchestrator._handle_exception, IndexingOrchestrator.run_phase_1_symbol_extraction, IndexingLogger.mustLog, IndexingLogger.mustLog, IndexingOrchestrator._get_language_definition, IndexWriter.set_language_definition, IndexingOrchestrator.run_phase_2_intermediate_resolution, IndexingOrchestrator._handle_exception, IndexingOrchestrator.run_phase_2_intermediate_resolution, IndexingLogger.mustLog, IndexingLogger.mustLog, IndexingOrchestrator._get_language_definition, IndexWriter.set_language_definition, IndexingOrchestrator.run_phase_3_final_resolution, IndexingOrchestrator._handle_exception, IndexingOrchestrator.run_phase_3_final_resolution, IndexingLogger.mustLog, IndexingLogger.stop_timing, IndexingLogger.print_profiling_report, IndexingOrchestrator._generate_exception_summary, IndexingLogger.mustLog
+```
+
+This reveals the sophisticated orchestration within `process_files`, showing instantiation of core components (`IndexWriter`, `IndexReader`) and the three-phase indexing pipeline with comprehensive error handling and performance monitoring.
+
 **3. Analyze Key Files**
 
 ```
@@ -347,7 +458,7 @@ If automatic index updates aren't working when files change, try:
 ### **Building from Source**
 
 ```bash
-git clone https://github.com/yourusername/code-scope-mcp.git
+git clone https://github.com/marksolly/code-scope-mcp.git
 cd code-scope-mcp
 uv sync
 uv run code-scope-mcp
@@ -372,6 +483,7 @@ Please see [NEW_LANG_GUIDE.md](NEW_LANG_GUIDE.md) for details on how to add and 
 
 * https://glean.software/docs/introduction/ (for humans, not an MCP)
 * https://github.com/johnhuang316/code-index-mcp
+* https://github.com/admica/FileScopeMCP
 
 ### **Credit & Acknowledgement**
 

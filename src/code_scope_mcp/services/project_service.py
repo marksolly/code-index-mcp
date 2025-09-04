@@ -1,5 +1,5 @@
 """
-Project management service for the Code Index MCP server.
+Project management service for the Code Scope MCP server.
 
 This service handles project initialization, configuration management,
 and project structure operations.

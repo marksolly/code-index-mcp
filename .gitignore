@@ -36,7 +36,8 @@ ENV/
 Thumbs.db
 
 # Code Index MCP specific files
-.code_indexer/
+*.db
+*.db.*log
 
 
 # Claude Code generated files

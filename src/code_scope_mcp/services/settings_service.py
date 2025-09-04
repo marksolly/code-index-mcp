@@ -1,5 +1,5 @@
 """
-Settings management service for the Code Index MCP server.
+Settings management service for the Code Scope MCP server.
 
 This service handles settings information, statistics,
 temporary directory management, and settings cleanup operations.

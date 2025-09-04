@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Dict, List, Any, Optional
 from .models import FileInfo, ProjectScanResult, SpecialFiles
 from ..utils.qualified_names import normalize_file_path
-from code_index_mcp.constants import SUPPORTED_EXTENSIONS
+from code_scope_mcp.constants import SUPPORTED_EXTENSIONS
 
 
 class ProjectScanner:

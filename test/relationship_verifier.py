@@ -1,5 +1,5 @@
 import sqlite3
-from src.code_index_mcp.db.database import DatabaseService
+from src.code_scope_mcp.db.database import DatabaseService
 class RelationshipVerifier:
     def __init__(self, db_service: DatabaseService):
         self.db_service = db_service

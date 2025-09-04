@@ -4,7 +4,7 @@ import os
 import time
 from typing import Any, Dict, List, Optional
 
-# src/code_index_mcp/utils/indexing_logger.py
+# src/code_scope_mcp/indexing/indexing_logger.py
 
 class ComponentRegistry:
     """Automatically discovers and manages relationship type -> component mappings."""
@@ -22,7 +22,7 @@ class ComponentRegistry:
         cls._reverse_map = {}    # component_name -> relationship_type
 
         # Base directory for relationship handlers
-        handler_base = "src.code_index_mcp.indexing.relationship_handlers"
+        handler_base = "src.code_scope_mcp.indexing.relationship_handlers"
 
         # Scan language directories
         for language_dir in ["javascript", "python"]:

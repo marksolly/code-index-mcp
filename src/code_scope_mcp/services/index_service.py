@@ -1,5 +1,5 @@
 """
-Index management service for the Code Index MCP server.
+Index management service for the Code Scope MCP server.
 
 This service handles index building, management, file discovery,
 and index refresh operations.

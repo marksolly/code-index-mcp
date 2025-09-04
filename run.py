@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-Development convenience script to run the Code Index MCP server.
+Development convenience script to run the Code Scope MCP server.
 """
 import sys
 import os
@@ -11,10 +11,10 @@ src_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'src')
 sys.path.insert(0, src_path)
 
 try:
-    from code_index_mcp.server import main
+    from code_scope_mcp.server import main
 
     if __name__ == "__main__":
-        print("Starting Code Index MCP server...", file=sys.stderr)
+        print("Starting Code Scope MCP server...", file=sys.stderr)
         print(f"Added path: {src_path}", file=sys.stderr)
         main()
 except ImportError as e:

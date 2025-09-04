@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Code Index MCP CLI Tool
+Code Scope MCP CLI Tool
 
 A command-line interface for indexing codebases and querying the resulting symbol database.
 
@@ -33,16 +33,16 @@ src_path = project_root / "src"
 if str(src_path) not in sys.path:
     sys.path.insert(0, str(src_path))
 
-from code_index_mcp.db.database import DatabaseService
-from code_index_mcp.indexing.orchestrator import IndexingOrchestrator
-from code_index_mcp.indexing.indexing_logger import IndexingLogger
-from code_index_mcp.indexing.ignore_handler import IgnoreHandler
-from code_index_mcp.symbol_finder import SymbolFinder
+from code_scope_mcp.db.database import DatabaseService
+from code_scope_mcp.indexing.orchestrator import IndexingOrchestrator
+from code_scope_mcp.indexing.indexing_logger import IndexingLogger
+from code_scope_mcp.indexing.ignore_handler import IgnoreHandler
+from code_scope_mcp.symbol_finder import SymbolFinder
 
 
 def build_extension_map() -> dict:
     """Build extension to language mapping from language definitions."""
-    from code_index_mcp.indexing.languages import LanguageDefinition
+    from code_scope_mcp.indexing.languages import LanguageDefinition
     import inspect
 
     extension_map = {}
@@ -50,7 +50,7 @@ def build_extension_map() -> dict:
     # Discover language definitions (same way as orchestrator)
     try:
         # Import the languages module
-        import code_index_mcp.indexing.languages as lang_module
+        import code_scope_mcp.indexing.languages as lang_module
 
         for name, obj in inspect.getmembers(lang_module):
             if (inspect.isclass(obj) and
@@ -248,7 +248,7 @@ def main():
     symbol_types_str = ', '.join(available_types)
 
     parser = argparse.ArgumentParser(
-        description="Code Index MCP CLI Tool",
+        description="Code Scope MCP CLI Tool",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=f"""
 Examples:

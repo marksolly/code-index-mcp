@@ -7,7 +7,7 @@ It dynamically discovers and loads test definitions for various programming lang
 Usage examples with `uv run`:
 
 First, ensure correct python virtual environment is active:
-    `source /home/htpc/code-index-mcp/.venv/bin/activate`
+    `source /home/htpc/code-scope-mcp/.venv/bin/activate`
 
 1. Run all language tests:
    uv run python test/test_language_support_suite.py --failfast
@@ -33,9 +33,9 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from src.code_index_mcp.db.database import DatabaseService
-from src.code_index_mcp.indexing.orchestrator import IndexingOrchestrator
-from src.code_index_mcp.indexing.indexing_logger import IndexingLogger, ComponentRegistry
+from src.code_scope_mcp.db.database import DatabaseService
+from src.code_scope_mcp.indexing.orchestrator import IndexingOrchestrator
+from src.code_scope_mcp.indexing.indexing_logger import IndexingLogger, ComponentRegistry
 from test.relationship_verifier import RelationshipVerifier
 from test.lang_definitions.base_test_definition import BaseTestDefinition
 

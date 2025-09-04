@@ -1,5 +1,5 @@
 """
-File operations service for the Code Index MCP server.
+File operations service for the Code Scope MCP server.
 
 This service handles file content retrieval, file analysis,
 and file metadata operations.

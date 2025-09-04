@@ -3,14 +3,14 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "code-index-mcp"
-version = "1.2.1"
+name = "code-scope-mcp"
+version = "0.0.1"
 description = "Code indexing and analysis tools for LLMs using MCP"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
-    {name = "johnhuang316"}
+    {name = "marksolly"}
 ]
 dependencies = [
     "mcp>=0.3.0",
@@ -21,11 +21,11 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/johnhuang316/code-index-mcp"
-"Bug Tracker" = "https://github.com/johnhuang316/code-index-mcp/issues"
+Homepage = "https://github.com/marksolly/code-scope-mcp"
+"Bug Tracker" = "https://github.com/marksolly/code-scope-mcp/issues"
 
 [project.scripts]
-code-index-mcp = "code_index_mcp.server:main"
+code-scope-mcp = "code_scope_mcp.server:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

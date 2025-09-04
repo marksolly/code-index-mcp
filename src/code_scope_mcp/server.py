@@ -1,5 +1,5 @@
 """
-Code Index MCP Server
+Code Scope MCP Server
 
 This MCP server allows LLMs to index, search, and analyze code from a project directory.
 It provides tools for file discovery, content retrieval, and code analysis.
@@ -30,8 +30,8 @@ from .utils import (
 )
 
 @dataclass
-class CodeIndexerContext:
-    """Context for the Code Indexer MCP server."""
+class CodeScopeContext:
+    """Context for the Code Scope MCP server."""
     base_path: str
     settings: ProjectSettings
     file_count: int = 0
