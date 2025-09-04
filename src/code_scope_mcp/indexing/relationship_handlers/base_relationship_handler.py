@@ -49,3 +49,14 @@ class BaseRelationshipHandler(ABC):
     def resolve_complex(self, writer: 'IndexWriter', reader: 'IndexReader'):
         """Phase 3: Handle complex multi-step relationship resolution."""
         pass
+
+    def _create_unresolved_relationship(self, writer, **kwargs):
+        """Helper method to create unresolved relationships with proper target_resolver_name.
+
+        Every relationship handler creates relationships that it itself is responsible for resolving.
+        This ensures the database properly tracks which handler resolves each relationship.
+        """
+        if 'target_resolver_name' not in kwargs:
+            kwargs['target_resolver_name'] = self.__class__.__name__
+
+        writer.add_unresolved_relationship(**kwargs)

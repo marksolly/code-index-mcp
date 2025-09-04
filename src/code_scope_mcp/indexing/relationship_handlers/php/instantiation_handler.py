@@ -121,5 +121,63 @@ class PhpInstantiationHandler(BaseInstantiationHandler):
             return file_qname
 
         except Exception as e:
-            self.logger.log(self.__class__.__name__, f"DEBUG: Error finding containing context: {e}")
+            self.logger.log(self.__class__.__name__, f"DEBUG: Error extracting context: {e}")
             return file_qname
+
+    def _should_track_instantiation(self, class_name: str, node, source_qname: str, file_qname: str) -> bool:
+        """Determine if a PHP instantiation should be tracked based on "fail-soft" philosophy.
+
+        Focus on high-signal instantiations (user-defined classes).
+        Skip low-signal patterns that create unresolvable relationships.
+
+        Args:
+            class_name: The name of the class being instantiated
+            node: The AST node representing the instantiation
+            source_qname: The qname of the containing context
+            file_qname: The file being processed
+
+        Returns:
+            True if instantiation should be tracked, False to skip (following fail-soft approach)
+        """
+        try:
+            # Skip built-in PHP types and core classes
+            builtin_classes = {
+                'Exception', 'ErrorException', 'PDOException', 'DateTime', 'DateTimeZone',
+                'PDO', 'mysqli', 'SplFileObject', 'DirectoryIterator', 'ArrayIterator',
+                'stdClass', 'ArrayObject', 'Closure', 'Generator', '__PHP_Incomplete_Class'
+            }
+
+            if class_name in builtin_classes:
+                self.logger.log(self.__class__.__name__, f"DEBUG: Skipping built-in PHP class instantiation: {class_name}")
+                return False
+
+            # Skip generic/common library classes that are likely external or not meaningful
+            generic_classes = {
+                'Logger', 'Cache', 'Config', 'Database', 'DB', 'Connection', 'Connector',
+                'Helper', 'Utils', 'Util', 'Manager', 'Factory', 'Builder', 'Handler'
+            }
+
+            if class_name in generic_classes:
+                self.logger.log(self.__class__.__name__, f"DEBUG: Skipping generic PHP class instantiation: {class_name}")
+                return False
+
+            # HIGH-SIGNAL: Classes starting with capital letters (following PSR conventions)
+            # PHP follows PascalCase for class names
+            if class_name[0].isupper():
+                self.logger.log(self.__class__.__name__, f"DEBUG: Tracking PascalCase PHP class instantiation: {class_name}")
+                return True
+
+            # Skip very short names
+            if len(class_name) <= 1:
+                self.logger.log(self.__class__.__name__, f"DEBUG: Skipping too-short PHP class name: {class_name}")
+                return False
+
+            # For now, be conservative: only track PascalCase classes
+            # This focuses on meaningful, potentially resolvable instantiations
+            self.logger.log(self.__class__.__name__, f"DEBUG: Skipping non-PascalCase PHP class instantiation: {class_name}")
+            return False
+
+        except Exception as e:
+            self.logger.log(self.__class__.__name__, f"DEBUG: Error checking if PHP instantiation should be tracked: {e}")
+            # On error, default to conservative (don't track)
+            return False

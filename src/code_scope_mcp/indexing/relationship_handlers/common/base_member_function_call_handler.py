@@ -86,7 +86,8 @@ class BaseMemberFunctionCallHandler(BaseRelationshipHandler, ABC):
                         rel_type="calls_class_method",
                         needs_type="declares_class_method",
                         target_qname=None,
-                        intermediate_symbol_qname=f"{object_name}.{method_name}"  # Store object.method for resolution
+                        intermediate_symbol_qname=f"{object_name}.{method_name}",  # Store object.method for resolution
+                        target_resolver_name="BaseMemberFunctionCallHandler"
                     )
                 else:
                     self.logger.log(self.__class__.__name__, f"DEBUG: Source symbol not found: {source_qname}")

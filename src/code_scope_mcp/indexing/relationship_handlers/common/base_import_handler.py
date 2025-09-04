@@ -99,9 +99,10 @@ class BaseImportHandler(BaseRelationshipHandler, ABC):
                             source_qname=file_qname,
                             target_name=imported_name,
                             rel_type="imports",
-                            needs_type="imports",
+                            needs_type="declares_class",  # Remove circular dependency by waiting for class declarations
                             target_qname=None,
-                            intermediate_symbol_qname=f"{target_file}:__FILE__"  # Hint about the source file
+                            intermediate_symbol_qname=f"{target_file}:__FILE__",  # Hint about the source file
+                            target_resolver_name="BaseImportHandler"
                         )
                         self.logger.log(self.__class__.__name__, f"DEBUG: Created unresolved import: {file_qname} -> {imported_name} from {target_file}")
 

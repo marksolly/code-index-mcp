@@ -43,6 +43,7 @@ class PythonTestDefinition(BaseTestDefinition):
             "test/small-samples/python/file1.py",
             "test/small-samples/python/file2.py",
             "test/small-samples/python/file3.py",
+            "test/small-samples/python/mypackage/mymodule.py",
         ]
 
     def _define_expected_relationships(self) -> List[Dict[str, Any]]:

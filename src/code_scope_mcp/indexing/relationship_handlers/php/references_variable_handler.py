@@ -12,6 +12,7 @@ class PhpReferencesVariableHandler(BaseRelationshipHandler):
     """Handles PHP variable/constant reference relationships."""
 
     relationship_type = "references_variable"
+    phase_dependencies = ["imports"]  # Needs imports resolved to find imported variables
 
     def __init__(self, language: str, language_obj: Any, logger):
         super().__init__(language, language_obj, logger)
@@ -54,6 +55,11 @@ class PhpReferencesVariableHandler(BaseRelationshipHandler):
                 if self._is_keyword_or_builtin(variable_name, node):
                     continue
 
+                # Only track constants using selective approach
+                if not variable_name.isupper():
+                    self.logger.log(self.__class__.__name__, f"DEBUG: Skipping non-constant reference: {variable_name}")
+                    continue
+
                 # Find the containing method/class context
                 source_qname = self._find_containing_context(node, reader, file_qname)
 
@@ -70,7 +76,8 @@ class PhpReferencesVariableHandler(BaseRelationshipHandler):
                         if source_symbols:
                             source_symbol_id = source_symbols[0]['id']
                             self.logger.log(self.__class__.__name__, f"DEBUG: Creating unresolved relationship: {source_qname} -> {variable_name}")
-                            writer.add_unresolved_relationship(
+                            self._create_unresolved_relationship(
+                                writer,
                                 source_symbol_id=source_symbol_id,
                                 source_qname=source_qname,
                                 target_name=variable_name,

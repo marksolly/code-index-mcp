@@ -311,6 +311,8 @@ class DatabaseService:
                 target_name TEXT NOT NULL,
                 target_qname TEXT,
                 needs_type_id INTEGER NOT NULL, /* type of relationship this symbol pair is waiting on */
+                creator_location TEXT,           /* Format "filename.ext:line_no" */
+                target_resolver_name TEXT,       /* Optional resolver class name */
                 FOREIGN KEY (source_symbol_id) REFERENCES code_symbols (id) ON DELETE CASCADE
             );
             """,

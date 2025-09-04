@@ -1,5 +1,6 @@
 import sqlite3
 import re
+import inspect
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -55,6 +56,34 @@ class IndexWriter:
 
         if not self.QNAME_VALIDATION_REGEX.match(qname):
             raise ValueError(f"IndexWriter: Invalid qname format in {context}: '{qname}'")
+
+    def _extract_caller_location(self) -> Optional[str]:
+        """
+        Extract the caller's file name and line number from the call stack.
+
+        Returns:
+            A string in format "filename.ext:line_no" or None if extraction fails.
+        """
+        try:
+            # Get the call stack, skip this method (index 0) and the calling method (index 1)
+            # to get the actual caller
+            frame = inspect.stack()[2]  # Index 2 gets the caller of add_unresolved_relationship
+            if "timing_utils" in frame.filename:
+                frame = inspect.stack()[3]
+
+            # Extract filename (basename only, no full path)
+            filename = Path(frame.filename).name
+
+            # Extract line number
+            line_no = frame.lineno
+
+            # Format as "filename.ext:line_no"
+            return f"{filename}:{line_no}"
+
+        except (IndexError, AttributeError, OSError) as e:
+            # Log the error but don't fail - return None for graceful degradation
+            self.logger.log("IndexWriter", f"Warning: Failed to extract caller location: {e}")
+            return None
 
     def _get_or_create_file_id(self, file_path: str, language: str) -> int:
         """Gets the file ID from the cache or database, creating it if it doesn't exist."""
@@ -250,18 +279,21 @@ class IndexWriter:
 
     @profile_db_operation()
     def add_unresolved_relationship(
-        self, source_symbol_id: int, source_qname: str, target_name: str, rel_type: str, needs_type: str, target_qname: str = None, intermediate_symbol_qname: str = None
+        self, source_symbol_id: int, source_qname: str, target_name: str, rel_type: str, needs_type: str, target_qname: str = None, intermediate_symbol_qname: str = None, target_resolver_name: str = None
     ):
         """Adds an unresolved relationship directly to the database.
 
+            Automatically captures the caller's file name and line number for debugging purposes.
+
             Args:
-            source_symbol_id    The ID of the symbol which forms the left hand side of the unresolved relationship
-            source_qname        The qname of the symbol which forms the left hand side of the unresolved relationship
-            target_name         The plain name of the symbol which is on the right hand side of the relationship. Used by relationship handlers when a target_qname is not available/able to be computed yet.
-            rel_type            The type of relationship to be created.
-            needs_type          The type of relationship which must already exist in the database. This is a hint to aid in correct order of resolution.
-            target_qname        Optional. The qname of the symbol which forms the right hand side of the unresolved relationship.
+            source_symbol_id      The ID of the symbol which forms the left hand side of the unresolved relationship
+            source_qname          The qname of the symbol which forms the left hand side of the unresolved relationship
+            target_name           The plain name of the symbol which is on the right hand side of the relationship. Used by relationship handlers when a target_qname is not available/able to be computed yet.
+            rel_type              The type of relationship to be created.
+            needs_type            The type of relationship which must already exist in the database. This is a hint to aid in correct order of resolution.
+            target_qname          Optional. The qname of the symbol which forms the right hand side of the unresolved relationship.
             intermediate_symbol_qname   Optional. A hint which may help in resolving an indirect relationship.
+            target_resolver_name  Optional. Name of the resolver class expected to handle this unresolved relationship.
 
         """
         self._validate_qname(source_qname, "add_unresolved_relationship source")
@@ -277,13 +309,16 @@ class IndexWriter:
         if not rel_type_id or not needs_type_id:
             raise ValueError(f"Skipping unresolved relationship due to unknown type: rel_type='{rel_type}', needs_type='{needs_type}'")
 
+        # Automatically extract caller location information
+        creator_location = self._extract_caller_location()
+
         cursor = self.db_connection.cursor()
 
         cursor.execute(
             """
             INSERT INTO unresolved_relationships
-            (source_symbol_id, relationship_type_id, target_name, target_qname, needs_type_id, intermediate_symbol_qname)
-            VALUES (?, ?, ?, ?, ?, ?)
+            (source_symbol_id, relationship_type_id, target_name, target_qname, needs_type_id, intermediate_symbol_qname, creator_location, target_resolver_name)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 source_symbol_id,
@@ -292,6 +327,8 @@ class IndexWriter:
                 target_qname,
                 needs_type_id,
                 intermediate_symbol_qname,
+                creator_location,
+                target_resolver_name,
             ),
         )
         self.db_connection.commit()

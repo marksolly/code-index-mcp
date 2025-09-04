@@ -11,6 +11,7 @@ class PythonReferencesConstantHandler(BaseRelationshipHandler):
     """Handles Python constant/variable reference relationships."""
 
     relationship_type = "references_variable"
+    phase_dependencies = ["imports"]  # Needs imports resolved to find imported constants
 
     def __init__(self, language: str, language_obj: Any, logger):
         super().__init__(language, language_obj, logger)
@@ -57,7 +58,7 @@ class PythonReferencesConstantHandler(BaseRelationshipHandler):
             constant_name = constant_node.text.decode('utf-8')
 
             # Only process ALL_CAPS identifiers (Python constant convention)
-            if constant_name.isupper():
+            if constant_name.isupper() and len(constant_name) > 1:
                 # Find the containing method/class context
                 source_qname = self._find_containing_context(constant_node, reader, file_qname)
 
@@ -74,7 +75,8 @@ class PythonReferencesConstantHandler(BaseRelationshipHandler):
                         if source_symbols:
                             source_symbol_id = source_symbols[0]['id']
                             self.logger.log(self.__class__.__name__, f"DEBUG: Creating unresolved relationship: {source_qname} -> {constant_name}")
-                            writer.add_unresolved_relationship(
+                            self._create_unresolved_relationship(
+                                writer,
                                 source_symbol_id=source_symbol_id,
                                 source_qname=source_qname,
                                 target_name=constant_name,

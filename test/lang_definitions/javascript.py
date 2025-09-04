@@ -59,6 +59,7 @@ class JavascriptTestDefinition(BaseTestDefinition):
             {'type': 'declares_class_method', 'count': 1, 'source_qname': 'file2.js:Car', 'target_qname': 'Car.drive'},
             {'type': 'declares_class_method', 'count': 1, 'source_qname': 'file2.js:Car', 'target_qname': 'Car.get_identifier'},
             {'type': 'references_variable', 'count': 1, 'source_qname': 'Car.drive', 'target_qname': 'file1.js:MY_CONSTANT'},
+            {'type': 'references_variable', 'count': 1, 'source_qname': 'Car.drive', 'target_qname': 'file2.js:MAX_VEHICLE_SPEED'},
 
             # file3.js
             {'type': 'imports', 'source_qname': 'file3.js:__FILE__', 'target_qname': 'file2.js:Car', 'count': 1},

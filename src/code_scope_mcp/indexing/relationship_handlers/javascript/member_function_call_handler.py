@@ -4,6 +4,8 @@ if TYPE_CHECKING:
     from tree_sitter import Tree
 
 from ..common.base_member_function_call_handler import BaseMemberFunctionCallHandler
+from ...writer import IndexWriter
+from ...reader import IndexReader
 
 
 class JavascriptMemberFunctionCallHandler(BaseMemberFunctionCallHandler):
@@ -265,3 +267,88 @@ class JavascriptMemberFunctionCallHandler(BaseMemberFunctionCallHandler):
         # Fallback: return the first method found
         self.logger.log(self.__class__.__name__, f"DEBUG: No clear class context found, returning first method: {method_symbols[0]['qname']}")
         return method_symbols[0]
+
+    def resolve_complex(self, writer: 'IndexWriter', reader: 'IndexReader'):
+        """
+        Phase 3: Handle JavaScript-specific complex resolution including built-in method calls.
+
+        For JavaScript, we need to handle built-in method calls where the type inference
+        isn't available through instantiation relationships (e.g., console.log, array.push).
+        """
+        self.logger.log(self.__class__.__name__, f"DEBUG: JavaScript resolve_complex CALLED for language {self.language}!")
+
+        # First call the parent's complex resolution
+        super().resolve_complex(writer, reader)
+
+        # Then handle JavaScript-specific resolution
+        unresolved = reader.find_unresolved("calls_class_method", language=self.language)
+
+        self.logger.log(self.__class__.__name__, f"DEBUG: JavaScript handler found {len(unresolved)} unresolved calls_class_method relationships in Phase 3")
+
+        for rel in unresolved:
+            method_name = rel['target_name']
+            intermediate_qname = rel['intermediate_symbol_qname']
+
+            # Try to resolve built-in method calls
+            if method_name and self._try_resolve_builtin_method(writer, rel, method_name, intermediate_qname or ''):
+                continue
+
+    def _try_resolve_builtin_method(self, writer: 'IndexWriter', rel, method_name: str, intermediate_qname: str) -> bool:
+        """
+        Try to resolve a method call to a built-in JavaScript type.
+
+        Args:
+            writer: IndexWriter instance
+            rel: Unresolved relationship (sqlite3.Row or dict-like object)
+            method_name: Name of the method being called
+            intermediate_qname: The intermediate qname (e.g., "this.cars.push")
+
+        Returns:
+            True if resolved as built-in, False otherwise
+        """
+        self.logger.log(self.__class__.__name__, f"DEBUG: Attempting to resolve JavaScript built-in method: {intermediate_qname}")
+
+        # JavaScript built-in methods that need resolution
+        js_builtin_methods = {
+            # Array methods
+            'push': 'Array',
+            'pop': 'Array',
+            'shift': 'Array',
+            'unshift': 'Array',
+            'splice': 'Array',
+            'slice': 'Array',
+            'concat': 'Array',
+            'join': 'Array',
+            'reverse': 'Array',
+            'sort': 'Array',
+            'indexOf': 'Array',
+            'lastIndexOf': 'Array',
+            'includes': 'Array',
+            'forEach': 'Array',
+            'map': 'Array',
+            'filter': 'Array',
+            'reduce': 'Array',
+            'some': 'Array',
+            'every': 'Array',
+
+            # Console methods
+            'log': 'Console',
+            'warn': 'Console',
+            'error': 'Console',
+            'info': 'Console',
+            'debug': 'Console',
+            'trace': 'Console',
+        }
+
+        # Check if this is a known built-in method
+        if method_name not in js_builtin_methods:
+            return False
+
+        builtin_type = js_builtin_methods[method_name]
+
+        # For built-in methods, we just mark the unresolved relationship as resolved
+        # since these methods don't exist as symbols in the source code
+        writer.delete_unresolved_relationship(rel['id'])
+
+        self.logger.log(self.__class__.__name__, f"DEBUG: Resolved JavaScript built-in method call: {rel['source_qname']} -> {builtin_type}.{method_name} (marked as resolved)")
+        return True

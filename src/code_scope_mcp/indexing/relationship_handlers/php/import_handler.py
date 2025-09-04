@@ -79,7 +79,8 @@ class PhpImportHandler(BaseImportHandler):
                                 rel_type="imports",
                                 needs_type="imports",
                                 target_qname=None,
-                                intermediate_symbol_qname=f"{target_file}:__FILE__"
+                                intermediate_symbol_qname=f"{target_file}:__FILE__",
+                                target_resolver_name="PhpImportHandler"
                             )
                             self.logger.log(self.__class__.__name__, f"DEBUG: Created unresolved import: {file_qname} -> {symbol_name} from {target_file}")
 

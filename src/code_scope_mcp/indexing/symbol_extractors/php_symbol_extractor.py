@@ -207,6 +207,7 @@ class PhpClassExtractor:
                             rel_type="inherits",
                             needs_type="declares_class",
                             target_qname=None,  # Will be resolved by handler
+                            target_resolver_name="PhpInheritsHandler"
                         )
                         return  # Success, exit function
 
@@ -256,6 +257,7 @@ class PhpClassExtractor:
                                     rel_type="inherits",
                                     needs_type="declares_class",
                                     target_qname=None,  # Will be resolved by handler
+                                    target_resolver_name="PhpInheritsHandler"
                                 )
                                 break
 

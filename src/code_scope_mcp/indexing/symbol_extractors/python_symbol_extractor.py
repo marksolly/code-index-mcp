@@ -141,6 +141,7 @@ class PythonClassExtractor:
                     rel_type="inherits",
                     needs_type="imports",
                     target_qname=None,  # Will be resolved by handler
+                    target_resolver_name="PythonInheritsHandler"
                 )
 
 class PythonFunctionExtractor:

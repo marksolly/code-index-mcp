@@ -67,15 +67,10 @@ class PythonImportHandler(BaseImportHandler):
             module_name: The module name (e.g., 'package.module')
 
         Returns:
-            File path string (e.g., 'package/module.py')
+            File path string with .py extension (e.g., 'package/module.py')
         """
-        # Convert module name to file path (simplified for test cases)
-        if module_name.startswith('.'):
-            # Relative import - convert to file path
-            target_file = module_name.replace('.', '/') + '.py'
-            if target_file.startswith('/'):
-                target_file = target_file[1:]
-        else:
-            target_file = module_name.replace('.', '/') + '.py'
+        # Convert module name to file path
+        # For test cases, we need to handle the project-relative paths
+        target_file = module_name.replace('.', '/') + '.py'
 
         return target_file

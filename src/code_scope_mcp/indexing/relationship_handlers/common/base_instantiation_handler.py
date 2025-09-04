@@ -58,22 +58,27 @@ class BaseInstantiationHandler(BaseRelationshipHandler, ABC):
                     source_qname = self._find_containing_context(node, file_qname)
 
                     if source_qname:
-                        # ⚠️  LAST RESORT: Find source symbol ID using reader
-                        source_symbols = reader.find_symbols(qname=source_qname, language=self.language)
-                        if source_symbols:
-                            source_symbol_id = source_symbols[0]['id']
-                            self.logger.log(self.__class__.__name__, f"DEBUG: Found source symbol id: {source_symbol_id}, creating unresolved relationship")
-                            # Create unresolved instantiation relationship
-                            writer.add_unresolved_relationship(
-                                source_symbol_id=source_symbol_id,
-                                source_qname=source_qname,
-                                target_name=class_name,
-                                rel_type="instantiates",
-                                needs_type="declares_class",
-                                target_qname=None,  # Will be resolved
-                            )
+                        # Skip low-signal instantiations following "fail-soft" philosophy
+                        if self._should_track_instantiation(class_name, node, source_qname, file_qname):
+                            # ⚠️  LAST RESORT: Find source symbol ID using reader
+                            source_symbols = reader.find_symbols(qname=source_qname, language=self.language)
+                            if source_symbols:
+                                source_symbol_id = source_symbols[0]['id']
+                                self.logger.log(self.__class__.__name__, f"DEBUG: Found source symbol id: {source_symbol_id}, creating unresolved relationship for {class_name}")
+                                # Create unresolved instantiation relationship
+                                self._create_unresolved_relationship(
+                                    writer,
+                                    source_symbol_id=source_symbol_id,
+                                    source_qname=source_qname,
+                                    target_name=class_name,
+                                    rel_type="instantiates",
+                                    needs_type="declares_class",
+                                    target_qname=None,  # Will be resolved
+                                )
+                            else:
+                                self.logger.log(self.__class__.__name__, f"DEBUG: Source symbol not found: {source_qname}")
                         else:
-                            self.logger.log(self.__class__.__name__, f"DEBUG: Source symbol not found: {source_qname}")
+                            self.logger.log(self.__class__.__name__, f"DEBUG: Skipping low-signal instantiation: {class_name} in {source_qname}")
 
     @abstractmethod
     def _get_instantiation_queries(self) -> list[str]:
@@ -97,6 +102,24 @@ class BaseInstantiationHandler(BaseRelationshipHandler, ABC):
 
         Returns the qname of the containing function/method, or the file qname if at module level.
         Returns None if context cannot be determined.
+        """
+        pass
+
+    @abstractmethod
+    def _should_track_instantiation(self, class_name: str, node, source_qname: str, file_qname: str) -> bool:
+        """Determine if an instantiation should be tracked based on "fail-soft" philosophy.
+
+        Following NEW_LANG_GUIDE: Focus on high-signal symbols (imported/custom classes).
+        Skip low-signal patterns that clutter the database with unresolvable relationships.
+
+        Args:
+            class_name: The name of the class being instantiated
+            node: The AST node representing the instantiation
+            source_qname: The qname of the containing context (method/function/file)
+            file_qname: The file being processed
+
+        Returns:
+            True if instantiation should be tracked, False to skip (following fail-soft approach)
         """
         pass
 

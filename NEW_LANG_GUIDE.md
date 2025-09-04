@@ -405,12 +405,76 @@ This SQL query joins the relationships, code_symbols, and relationship_types tab
 sqlite3 test_code_index.db "SELECT s1.name as source_name, s1.qname as source_qname, rt.name as rel_type, s2.name as target_name, s2.qname as target_qname FROM relationships r JOIN code_symbols s1 ON r.source_symbol_id = s1.id JOIN code_symbols s2 ON r.target_symbol_id = s2.id JOIN relationship_types rt ON r.type_id = rt.id ORDER BY source_qname;"
 ```
 
-Checking for duplicate relationships:
+Checking for duplicate relationships (always include the language):
 ```sql
 sqlite3 test_code_index.db "SELECT f.language, COUNT(*) as count, s1.name as source_name, s1.qname as source_qname, rt.name as rel_type, s2.name as target_name, s2.qname as target_qname FROM relationships r JOIN code_symbols s1 ON r.source_symbol_id = s1.id JOIN code_symbols s2 ON r.target_symbol_id = s2.id JOIN relationship_types rt ON r.type_id = rt.id JOIN files f ON s1.file_id = f.id GROUP BY source_qname, rel_type, target_qname, f.language HAVING COUNT(*) >= 2 ORDER BY source_qname;"
 ```
 
+Checking for unresolved relationships:
+```sql
+SELECT  f.language, s1.qname as source_qname, rt.name as rel_type, r.intermediate_symbol_qname, r.target_name, r.target_qname, r.creator_location, r.target_resolver_name
+FROM unresolved_relationships r 
+JOIN code_symbols s1 ON r.source_symbol_id = s1.id 
+JOIN relationship_types rt ON r.relationship_type_id = rt.id 
+JOIN files f ON s1.file_id = f.id
+ORDER BY language, source_qname;
+```
+
 6.  **Logging**: If you need more detailed information, you can add more logging to your extractors and analyzers. The `--failfast` flag will re-run the indexer with more verbose logging for the failed test case.
+
+## Step 5: Debugging Cross-Language Issues and Unresolved Relationships
+
+**Always Include Language in Debugging Queries**
+
+When debugging unresolved relationships (especially in STRICT MODE violations), **always include language information in your SQL queries**. This single mistake can waste significant time.
+
+**Bad Query (will show cross-language confusion):**
+```sql
+SELECT s1.qname as source_qname, ur.target_name, ur.intermediate_symbol_qname
+FROM unresolved_relationships ur
+JOIN code_symbols s1 ON ur.source_symbol_id = s1.id
+ORDER BY source_qname;
+```
+
+**Good Query (includes language for clarity):**
+```sql
+SELECT f.language, s1.qname as source_qname, ur.target_name, ur.intermediate_symbol_qname
+FROM unresolved_relationships ur
+JOIN code_symbols s1 ON ur.source_symbol_id = s1.id
+JOIN files f ON s1.file_id = f.id
+ORDER BY f.language, source_qname;
+```
+### Common Cross-Language Issues
+
+The test suite processes files from all supported languages (Python, JavaScript, PHP) in a single run, which can create unexpected cross-language conflicts.
+
+**Pattern 1: Language-Specific Built-in Method Calls**
+- **JavaScript**: `arr.push()`, `console.log()` - these create unresolved relationships because they're built-in
+- **Python**: `list.append()`, `dict.keys()` - same issue with built-in methods
+- **PHP**: Similar built-in method issues
+
+### Language-Specific Handler Extensions
+
+Add `resolve_complex` methods to handle built-in methods that can't be resolved through source code relationships:
+
+```python
+# Example: PythonMemberFunctionCallHandler
+def resolve_complex(self, writer, reader):
+    super().resolve_complex(writer, reader)
+    
+    unresolved = reader.find_unresolved("calls_class_method", language=self.language)
+    
+    for rel in unresolved:
+        if self._is_builtin_method(rel['target_name']):
+            # Delete - these are resolved as "built-in, no relationship needed"
+            writer.delete_unresolved_relationship(rel['id'])
+```
+**Cross-Language Debugging Checklist**
+- [ ] Include language columns in all SQL queries
+- [ ] Check for built-in method calls across supported languages
+- [ ] Verify unresolved relationships aren't from different language files
+- [ ] Add appropriate `resolve_complex` methods for each language
+- [ ] Test individual language handlers before full multi-language suite
 
 ## Notes for LLMs, Agents and Coding Assistants
 Attention: Claude, Cline, Cursor, Grok, Gemini & others.

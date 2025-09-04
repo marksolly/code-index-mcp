@@ -85,7 +85,8 @@ class PhpMemberFunctionCallHandler(BaseMemberFunctionCallHandler):
                         rel_type="calls_class_method",
                         needs_type="declares_class_method",
                         target_qname=None,
-                        intermediate_symbol_qname=intermediate_qname
+                        intermediate_symbol_qname=intermediate_qname,
+                        target_resolver_name="PhpMemberFunctionCallHandler"
                     )
                     self.logger.log(self.__class__.__name__, f"DEBUG: Unresolved relationship created")
                 else:

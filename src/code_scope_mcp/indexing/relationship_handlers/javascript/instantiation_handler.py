@@ -185,3 +185,62 @@ class JavascriptInstantiationHandler(BaseInstantiationHandler):
         except Exception as e:
             self.logger.log(self.__class__.__name__, f"DEBUG: Error extracting class name: {e}")
             return None
+
+    def _should_track_instantiation(self, class_name: str, node, source_qname: str, file_qname: str) -> bool:
+        """Determine if a JavaScript instantiation should be tracked based on "fail-soft" philosophy.
+
+        Focus on high-signal instantiations (imported/custom classes).
+        Skip low-signal patterns that create unresolvable relationships.
+
+        Args:
+            class_name: The name of the class being instantiated
+            node: The AST node representing the instantiation
+            source_qname: The qname of the containing context
+            file_qname: The file being processed
+
+        Returns:
+            True if instantiation should be tracked, False to skip (following fail-soft approach)
+        """
+        try:
+            # Skip built-in JavaScript types that cannot be meaningfully resolved
+            builtin_types = {
+                'Object', 'Array', 'String', 'Number', 'Boolean',
+                'Date', 'RegExp', 'Error', 'Promise', 'Map', 'Set',
+                'WeakMap', 'WeakSet', 'Symbol', 'BigInt', 'Proxy'
+            }
+
+            if class_name in builtin_types:
+                self.logger.log(self.__class__.__name__, f"DEBUG: Skipping built-in type instantiation: {class_name}")
+                return False
+
+            # Skip constructor names that are likely built-in or too generic
+            generic_names = {'$', 'jQuery', '_', 'utils', 'helper', 'util'}
+            if class_name in generic_names:
+                self.logger.log(self.__class__.__name__, f"DEBUG: Skipping generic/library instantiation: {class_name}")
+                return False
+
+            # Skip very short names (likely not meaningful classes)
+            if len(class_name) <= 1:
+                self.logger.log(self.__class__.__name__, f"DEBUG: Skipping too-short name instantiation: {class_name}")
+                return False
+
+            # HIGH-SIGNAL: Classes starting with capital letters (PascalCase convention)
+            # This follows the JavaScript convention that constructor functions/classes start with capital letters
+            if class_name[0].isupper():
+                self.logger.log(self.__class__.__name__, f"DEBUG: Tracking PascalCase class instantiation: {class_name}")
+                return True
+
+            # MEDIUM-SIGNAL: Check if this looks like a module/namespace pattern
+            # e.g., MyModule.MyClass (but for single instantiation, this would be MyClass)
+            # Since we're extracting just the class name, we assume imported classes
+            # The resolution phase will determine if they're resolvable
+
+            # For now, be conservative: only track PascalCase constructors
+            # This matches the pattern of meaningful, potentially resolvable instantiations
+            self.logger.log(self.__class__.__name__, f"DEBUG: Skipping non-PascalCase instantiation: {class_name}")
+            return False
+
+        except Exception as e:
+            self.logger.log(self.__class__.__name__, f"DEBUG: Error checking if instantiation should be tracked: {e}")
+            # On error, default to conservative (don't track)
+            return False

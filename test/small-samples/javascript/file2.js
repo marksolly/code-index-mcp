@@ -1,5 +1,7 @@
 import { MY_CONSTANT, Vehicle, helper_function, vehiclePolisher } from './file1.js';
 
+const MAX_VEHICLE_SPEED = 200; // km/h - vehicle performance constant
+
 class Engine {
     constructor(type) {
         this.type = type;
@@ -30,6 +32,6 @@ export class Car extends Vehicle {
         const helper_message = helper_function();
         const polish_message = vehiclePolisher();
         const licence_plate = this.get_identifier();
-        return `${start_message} | ${engine_message} | ${licence_plate} | Using helper: ${helper_message} | Constant: ${MY_CONSTANT} | Polish: ${polish_message}`;
+        return `${start_message} | ${engine_message} | ${licence_plate} | Using helper: ${helper_message} | Constant: ${MY_CONSTANT} | Max Speed: ${MAX_VEHICLE_SPEED} | Polish: ${polish_message}`;
     }
 }

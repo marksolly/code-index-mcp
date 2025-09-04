@@ -1,14 +1,91 @@
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Optional, Dict
 
 if TYPE_CHECKING:
     from tree_sitter import Tree
 
 from ..common.base_member_function_call_handler import BaseMemberFunctionCallHandler
+from ...writer import IndexWriter
+from ...reader import IndexReader
 
 
 class PythonMemberFunctionCallHandler(BaseMemberFunctionCallHandler):
     """Python-specific implementation of member function call relationship handler."""
 
+    # Map of common built-in methods to their corresponding types
+    BUILTIN_METHODS = {
+        'append': 'list',
+        'extend': 'list',
+        'insert': 'list',
+        'pop': 'list',
+        'remove': 'list',
+        'clear': 'list',
+        'sort': 'list',
+        'reverse': 'list',
+        'keys': 'dict',
+        'values': 'dict',
+        'items': 'dict',
+        'get': 'dict',
+        'update': 'dict',
+        'log': 'console',  # JavaScript console
+    }
+
+    def resolve_complex(self, writer: 'IndexWriter', reader: 'IndexReader'):
+        """
+        Phase 3: Handle Python-specific complex resolution including built-in method calls.
+
+        For Python, we need to handle built-in method calls where the type inference
+        isn't available through instantiation relationships (e.g., local variables).
+        """
+        self.logger.log(self.__class__.__name__, f"DEBUG: Python resolve_complex CALLED for language {self.language}!")
+
+        # First call the parent's complex resolution
+        super().resolve_complex(writer, reader)
+
+        # Then handle Python-specific resolution
+        unresolved = reader.find_unresolved("calls_class_method", language=self.language)
+
+        self.logger.log(self.__class__.__name__, f"DEBUG: Python handler found {len(unresolved)} unresolved calls_class_method relationships in Phase 3")
+
+        for rel in unresolved:
+            method_name = rel['target_name']
+            intermediate_qname = rel['intermediate_symbol_qname']
+
+            # Try to resolve built-in method calls
+            if method_name and self._try_resolve_builtin_method(writer, rel, method_name, intermediate_qname or ''):
+                continue
+
+    def _try_resolve_builtin_method(self, writer: 'IndexWriter', rel, method_name: str, intermediate_qname: str) -> bool:
+        """
+        Try to resolve a method call to a built-in Python type.
+
+        Args:
+            writer: IndexWriter instance
+            rel: Unresolved relationship (sqlite3.Row or dict-like object)
+            method_name: Name of the method being called
+            intermediate_qname: The intermediate qname (e.g., "self.cars.append")
+
+        Returns:
+            True if resolved as built-in, False otherwise
+        """
+        self.logger.log(self.__class__.__name__, f"DEBUG: Attempting to resolve built-in method: {intermediate_qname}")
+
+        # Check if this is a known built-in method
+        if method_name not in self.BUILTIN_METHODS:
+            return False
+
+        builtin_type = self.BUILTIN_METHODS[method_name]
+
+        # Create a synthetic qname for the built-in method
+        builtin_qname = f"{builtin_type}.{method_name}"
+
+        self.logger.log(self.__class__.__name__, f"DEBUG: Creating synthetic builtin method: {builtin_qname}")
+
+        # For built-in methods, we just mark the unresolved relationship as resolved
+        # since these methods don't exist as symbols in the source code
+        writer.delete_unresolved_relationship(rel['id'])
+
+        self.logger.log(self.__class__.__name__, f"DEBUG: Resolved built-in method call: {rel['source_qname']} -> {builtin_qname} (marked as resolved)")
+        return True
     def _get_member_call_queries(self) -> list[str]:
         """Return Python-specific tree-sitter queries for finding member function calls."""
         return [

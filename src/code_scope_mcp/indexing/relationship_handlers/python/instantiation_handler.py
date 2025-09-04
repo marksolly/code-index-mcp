@@ -115,3 +115,73 @@ class PythonInstantiationHandler(BaseInstantiationHandler):
         except Exception as e:
             self.logger.log(self.__class__.__name__, f"DEBUG: Error finding containing context: {e}")
             return file_qname
+
+    def _should_track_instantiation(self, class_name: str, node, source_qname: str, file_qname: str) -> bool:
+        """Determine if a Python instantiation should be tracked based on "fail-soft" philosophy.
+
+        Focus on high-signal instantiations (user-defined classes).
+        Skip low-signal patterns that create unresolvable relationships.
+
+        Args:
+            class_name: The name of the class being instantiated
+            node: The AST node representing the instantiation
+            source_qname: The qname of the containing context
+            file_qname: The file being processed
+
+        Returns:
+            True if instantiation should be tracked, False to skip (following fail-soft approach)
+        """
+        try:
+            # Skip built-in Python types
+            builtin_types = {
+                'dict', 'list', 'tuple', 'set', 'frozenset', 'str', 'int', 'float',
+                'bool', 'bytes', 'bytearray', 'range', 'slice', 'type', 'object',
+                'property', 'classmethod', 'staticmethod'
+            }
+
+            if class_name in builtin_types:
+                self.logger.log(self.__class__.__name__, f"DEBUG: Skipping built-in Python type instantiation: {class_name}")
+                return False
+
+            # Skip built-in Python exception classes
+            builtin_exceptions = {
+                'Exception', 'BaseException', 'ValueError', 'TypeError', 'AttributeError',
+                'KeyError', 'IndexError', 'FileNotFoundError', 'IOError', 'OSError',
+                'ImportError', 'ModuleNotFoundError', 'NameError', 'SyntaxError',
+                'IndentationError', 'RuntimeError', 'NotImplementedError', 'AssertionError'
+            }
+
+            if class_name in builtin_exceptions:
+                self.logger.log(self.__class__.__name__, f"DEBUG: Skipping built-in Python exception instantiation: {class_name}")
+                return False
+
+            # Skip generic/common library classes
+            generic_classes = {
+                'Logger', 'Cache', 'Config', 'Database', 'Connection', 'Manager',
+                'Factory', 'Builder', 'Handler', 'Helper', 'Utils', 'Util'
+            }
+
+            if class_name in generic_classes:
+                self.logger.log(self.__class__.__name__, f"DEBUG: Skipping generic Python class instantiation: {class_name}")
+                return False
+
+            # Skip very short names
+            if len(class_name) <= 1:
+                self.logger.log(self.__class__.__name__, f"DEBUG: Skipping too-short Python class name: {class_name}")
+                return False
+
+            # HIGH-SIGNAL: Classes starting with capital letters (following PEP 8)
+            # Python follows PascalCase for class names
+            if class_name[0].isupper():
+                self.logger.log(self.__class__.__name__, f"DEBUG: Tracking PascalCase Python class instantiation: {class_name}")
+                return True
+
+            # For now, be conservative: only track PascalCase classes
+            # This focuses on meaningful, potentially resolvable instantiations
+            self.logger.log(self.__class__.__name__, f"DEBUG: Skipping non-PascalCase Python class instantiation: {class_name}")
+            return False
+
+        except Exception as e:
+            self.logger.log(self.__class__.__name__, f"DEBUG: Error checking if Python instantiation should be tracked: {e}")
+            # On error, default to conservative (don't track)
+            return False
