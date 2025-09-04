@@ -44,11 +44,17 @@ class JavascriptTestDefinition(BaseTestDefinition):
 
     def _define_expected_relationships(self) -> List[Dict[str, Any]]:
         return [
+            # file1.js declares_file_function
+            {'type': 'declares_file_function', 'count': 1, 'source_qname': 'file1.js:__FILE__', 'target_qname': 'file1.js:helper_function'},
+            {'type': 'declares_file_function', 'count': 1, 'source_qname': 'file1.js:__FILE__', 'target_qname': 'file1.js:test_caller'},
+            {'type': 'calls_file_function',   'source_qname': 'file1.js:test_caller',    'target_qname': 'file1.js:helper_function', 'count': 1},
+
             # file2.js imports - these will be created by relationship handlers
             {'type': 'imports', 'source_qname': 'file2.js:__FILE__', 'target_qname': 'file1.js:MY_CONSTANT', 'count': 1},
             {'type': 'imports', 'source_qname': 'file2.js:__FILE__', 'target_qname': 'file1.js:Vehicle', 'count': 1},
             {'type': 'imports', 'source_qname': 'file2.js:__FILE__', 'target_qname': 'file1.js:helper_function', 'count': 1},
             {'type': 'imports', 'source_qname': 'file2.js:__FILE__', 'target_qname': 'file1.js:vehiclePolisher', 'count': 1},
+            {'type': 'imports', 'source_qname': 'file2.js:__FILE__', 'target_qname': 'file1.js:test_caller', 'count': 1},
             {'type': 'inherits', 'count': 1, 'source_qname': 'file2.js:Car', 'target_qname': 'file1.js:Vehicle'},
             {'type': 'instantiates', 'count': 1, 'source_qname': 'Car.constructor', 'target_qname': 'file2.js:Engine'},
             {'type': 'calls_class_method', 'count': 1, 'source_qname': 'Car.drive', 'target_qname': 'Vehicle.start'},

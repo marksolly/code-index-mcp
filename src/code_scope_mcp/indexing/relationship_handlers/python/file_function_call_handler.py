@@ -21,27 +21,33 @@ class PythonFileFunctionCallHandler(BaseFileFunctionCallHandler):
             """
         ]
 
-    def _extract_function_from_node(self, node, function_name: str) -> Optional[dict]:
+    def _extract_function_from_node(self, node, function_name: str, file_qname: str) -> Optional[dict]:
         """Extract function call details from a Python AST node.
 
         Args:
             node: Tree-sitter node representing a call expression
             function_name: The function name extracted from the query
+            file_qname: The file qualified name (e.g., 'file3.py')
 
         Returns:
             dict with 'function_name' and 'source_qname', or None if extraction fails
         """
         try:
-            # Find the containing class and method
+            # Strip :__FILE__ suffix if present for constructing proper qnames
+            base_file_qname = file_qname
+            if base_file_qname.endswith(":__FILE__"):
+                base_file_qname = base_file_qname[:-9]  # Remove ":__FILE__"
+
+            # Find the containing class and method or module-level function
             class_name = None
-            calling_method_name = None
+            containing_function_name = None
             current = node.parent
             while current:
-                if current.type == "function_definition":
-                    # Get method name
+                if current.type == "function_definition" and containing_function_name is None:
+                    # Get function name
                     for child in current.children:
                         if child.type == "identifier":
-                            calling_method_name = child.text.decode('utf-8')
+                            containing_function_name = child.text.decode('utf-8')
                             break
                 elif current.type == "class_definition":
                     # Get class name
@@ -49,19 +55,26 @@ class PythonFileFunctionCallHandler(BaseFileFunctionCallHandler):
                         if child.type == "identifier":
                             class_name = child.text.decode('utf-8')
                             break
-                    break
                 current = current.parent
 
-            if class_name and calling_method_name:
-                source_qname = f"{class_name}.{calling_method_name}"
-                return {
-                    'function_name': function_name,
-                    'source_qname': source_qname
-                }
+            if class_name:
+                # We're in a class, check if it's a method call
+                if containing_function_name:
+                    source_qname = f"{class_name}.{containing_function_name}"
+                else:
+                    # Call in class but not in a method, skip
+                    return None
+            elif containing_function_name:
+                # Call from within a module-level function
+                source_qname = f"{base_file_qname}:{containing_function_name}"
             else:
-                # If we can't find a proper class.method context, return None
-                # This ensures we only process calls that are actually within methods
+                # If we can't find either class.method or module function context, return None
                 return None
+
+            return {
+                'function_name': function_name,
+                'source_qname': source_qname
+            }
 
         except Exception as e:
             self.logger.log(self.__class__.__name__, f"DEBUG: Error extracting function call from node: {e}")

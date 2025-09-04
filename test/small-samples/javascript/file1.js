@@ -17,3 +17,7 @@ export class Vehicle {
 export const vehiclePolisher = () => {
     return "The paint looks immaculate!";
 };
+
+export function test_caller() {
+    return helper_function();
+}

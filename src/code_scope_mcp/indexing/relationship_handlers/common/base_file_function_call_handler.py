@@ -67,7 +67,7 @@ class BaseFileFunctionCallHandler(BaseRelationshipHandler, ABC):
 
                 if function_name:
                     # Extract call details using language-specific method
-                    call_details = self._extract_function_from_node(call_node, function_name)
+                    call_details = self._extract_function_from_node(call_node, function_name, file_qname)
                     if not call_details:
                         continue
 
@@ -98,8 +98,13 @@ class BaseFileFunctionCallHandler(BaseRelationshipHandler, ABC):
         pass
 
     @abstractmethod
-    def _extract_function_from_node(self, node, function_name: str) -> Optional[dict]:
+    def _extract_function_from_node(self, node, function_name: str, file_qname: str) -> Optional[dict]:
         """Extract function call details from an AST node.
+
+        Args:
+            node: Tree-sitter node representing a call expression
+            function_name: The function name being called
+            file_qname: The file qualified name (e.g., 'file3.py')
 
         Returns:
             dict with keys:
@@ -164,8 +169,37 @@ class BaseFileFunctionCallHandler(BaseRelationshipHandler, ABC):
         self.logger.log(self.__class__.__name__, f"DEBUG: _find_function_through_imports called with function_name='{function_name}', source_qname='{source_qname}'")
 
         # Extract the class name from source_qname (e.g., "Car.drive" -> "Car")
+        # or handle file function format (e.g., "file3.py:main" -> file context)
         source_parts = source_qname.split('.')
-        if len(source_parts) != 2:
+        if ':' in source_qname:
+            # File function format: file.py:function
+            file_name = source_qname.split(':')[0]
+            function_name_in_source = source_qname.split(':')[1]
+
+            # Try same-file resolution first
+            target_qname = f"{file_name}:{function_name}"
+            self.logger.log(self.__class__.__name__, f"DEBUG: Trying same-file resolution for target_qname: {target_qname}")
+            target_symbols = reader.find_symbols(qname=target_qname, language=self.language)
+            if target_symbols:
+                return target_symbols[0]
+
+            # Fallback to import-based resolution
+            # Use the file's imports to find the function
+            import_rels = reader.find_relationships(
+                source_qname=f"{file_name}:__FILE__",
+                rel_type="imports",
+                source_language=self.language,
+                target_language=self.language
+            )
+            for import_rel in import_rels:
+                target_qname = import_rel['target_qname']
+                if target_qname and target_qname.endswith(f":{function_name}"):
+                    target_symbols = reader.find_symbols(qname=target_qname, language=self.language)
+                    if target_symbols:
+                        return target_symbols[0]
+
+            return None
+        elif len(source_parts) != 2:
             self.logger.log(self.__class__.__name__, f"DEBUG: Invalid source_qname format: {source_qname}")
             return None
 

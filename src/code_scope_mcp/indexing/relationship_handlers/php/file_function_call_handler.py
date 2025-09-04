@@ -22,12 +22,13 @@ class PhpFileFunctionCallHandler(BaseFileFunctionCallHandler):
             """
         ]
 
-    def _extract_function_from_node(self, node, function_name: str) -> Optional[dict]:
+    def _extract_function_from_node(self, node, function_name: str, file_qname: str) -> Optional[dict]:
         """Extract function call details from an AST node.
 
         Args:
             node: Tree-sitter node representing the function_call_expression
             function_name: The function name as a string
+            file_qname: The file qualified name (e.g., 'file.php')
 
         Returns:
             dict with keys:
@@ -36,6 +37,11 @@ class PhpFileFunctionCallHandler(BaseFileFunctionCallHandler):
             Returns None if extraction fails.
         """
         try:
+            # Strip :__FILE__ suffix if present for constructing proper qnames
+            base_file_qname = file_qname
+            if base_file_qname.endswith(":__FILE__"):
+                base_file_qname = base_file_qname[:-9]  # Remove ":__FILE__"
+
             # Find containing context (class and method names)
             class_name, calling_method_name = self._find_calling_context(node)
 
@@ -44,7 +50,7 @@ class PhpFileFunctionCallHandler(BaseFileFunctionCallHandler):
                 source_qname = f"{class_name}.{calling_method_name}"
             elif calling_method_name:
                 # This shouldn't happen for file functions, but handle it anyway
-                source_qname = calling_method_name
+                source_qname = f"{base_file_qname}:{calling_method_name}"
             else:
                 return None
 

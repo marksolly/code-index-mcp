@@ -86,4 +86,5 @@ class PythonTestDefinition(BaseTestDefinition):
             {'type': 'calls_class_method', 'count': 1, 'source_qname': 'Garage.service_car', 'target_qname': 'Car.drive'},
             {'type': 'instantiates', 'count': 1, 'source_qname': 'file3.py:main', 'target_qname': 'file3.py:Garage'},
             {'type': 'calls_class_method', 'count': 1, 'source_qname': 'file3.py:main', 'target_qname': 'Garage.service_car'},
+            {'type': 'calls_file_function',   'source_qname': 'file3.py:main',    'target_qname': 'file3.py:gateOpener', 'count': 1},
         ]

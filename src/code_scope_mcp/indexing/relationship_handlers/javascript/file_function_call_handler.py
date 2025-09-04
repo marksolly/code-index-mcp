@@ -17,12 +17,13 @@ class JavascriptFileFunctionCallHandler(BaseFileFunctionCallHandler):
             ) @call
         """]
 
-    def _extract_function_from_node(self, node, function_name: str) -> Optional[dict]:
+    def _extract_function_from_node(self, node, function_name: str, file_qname: str) -> Optional[dict]:
         """Extract function call details from a JavaScript AST node.
 
         Args:
             node: Tree-sitter node representing a call_expression
             function_name: The function name extracted from the query
+            file_qname: The file qualified name (e.g., 'file1.js')
 
         Returns:
             dict with 'function_name' and 'source_qname', or None if extraction fails
@@ -32,8 +33,13 @@ class JavascriptFileFunctionCallHandler(BaseFileFunctionCallHandler):
             self.logger.log(self.__class__.__name__, f"DEBUG: Call expression node type: {node.type}")
             self.logger.log(self.__class__.__name__, f"DEBUG: Function name: {function_name}")
 
+            # Strip :__FILE__ suffix if present for constructing proper qnames
+            base_file_name = file_qname
+            if base_file_name.endswith(":__FILE__"):
+                base_file_name = base_file_name[:-9]  # Remove ":__FILE__"
+
             # Find the containing context (function/method/class)
-            source_qname = self._find_containing_context_for_call(node)
+            source_qname = self._find_containing_context_for_call(node, base_file_name)
 
             if source_qname:
                 self.logger.log(self.__class__.__name__, f"DEBUG: Extracted function call: {function_name} from {source_qname}")
@@ -49,11 +55,12 @@ class JavascriptFileFunctionCallHandler(BaseFileFunctionCallHandler):
             self.logger.log(self.__class__.__name__, f"DEBUG: Error extracting function call from node: {e}")
             return None
 
-    def _find_containing_context_for_call(self, node) -> Optional[str]:
+    def _find_containing_context_for_call(self, node, base_file_name: str) -> Optional[str]:
         """Find the containing context (function/method) for a function call.
 
         Args:
             node: The call expression node
+            base_file_name: The base file name (e.g., 'file1.js')
 
         Returns:
             The qname of the containing function/method, or None if at module level
@@ -63,6 +70,7 @@ class JavascriptFileFunctionCallHandler(BaseFileFunctionCallHandler):
             current = node.parent
             class_context = None
             method_context = None
+            function_context = None
 
             while current:
                 if current.type == "method_definition":
@@ -81,10 +89,8 @@ class JavascriptFileFunctionCallHandler(BaseFileFunctionCallHandler):
                     # Found a function context (not in a class)
                     function_name = self._extract_context_name(current)
                     if function_name:
-                        # For standalone functions, we need to construct the proper qname
-                        # Since we don't have access to the actual file path in this context,
-                        # we'll return a format that can be resolved later
-                        return f"function:{function_name}"
+                        # For standalone functions, use file:function format
+                        function_context = function_name
                     break
                 elif current.type == "program":
                     # At module level
@@ -99,9 +105,9 @@ class JavascriptFileFunctionCallHandler(BaseFileFunctionCallHandler):
             elif class_context:
                 # We're in a class but no specific method found
                 return f"{class_context}.method"
-            elif method_context:
+            elif function_context:
                 # We're in a standalone function
-                return f"function:{method_context}"
+                return f"{base_file_name}:{function_context}"
             else:
                 # At module level or couldn't determine context
                 return None

@@ -1,5 +1,8 @@
 from .file2 import Car
 
+def gateOpener():
+    print("Gate is open")
+
 class Garage:
     def __init__(self, name):
         self.name = name
@@ -13,6 +16,7 @@ class Garage:
         return car.drive()
 
 def main():
+    gateOpener()
     my_garage = Garage("Mark's Garage")
     result = my_garage.service_car("Tesla Model S", "Electric")
     print(result)
