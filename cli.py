@@ -145,7 +145,16 @@ def cmd_index(args):
         logger.enable_profiling()
         print("🔍 Profiling enabled - will show detailed performance metrics")
 
-    orchestrator = IndexingOrchestrator(str(target_dir), db_service, logger)
+    # Enable exception catching for production robustness
+    # Set exception log file next to the database file
+    exception_log_file = str(db_path) + ".exceptions.log"
+    orchestrator = IndexingOrchestrator(
+        str(target_dir),
+        db_service,
+        logger,
+        catch_exceptions=True,
+        exception_log_file=exception_log_file
+    )
 
     # Process files
     print("Starting indexing process...")
@@ -168,6 +177,29 @@ def parse_csv_list(values):
         else:
             result.append(value)
     return result
+
+
+def get_available_symbol_types():
+    """Get available symbol types from the database."""
+    try:
+        # Try to connect to existing database to get current symbol types
+        db_path = Path("code_index.db")
+        if db_path.exists():
+            db_service = DatabaseService(str(db_path))
+            db_service.connect()
+            conn = db_service.get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT name FROM symbol_types ORDER BY name")
+            types = [row[0] for row in cursor.fetchall()]
+            cursor.close()
+            db_service.close()
+            if types:
+                return types
+    except Exception:
+        pass
+
+    # Fallback to default types if database not available
+    return ['class', 'function', 'method', 'constant', 'file', 'import', 'global', 'variable', 'export', 'namespace']
 
 
 def cmd_query(args):
@@ -211,10 +243,14 @@ def cmd_query(args):
 
 
 def main():
+    # Get available symbol types for help text
+    available_types = get_available_symbol_types()
+    symbol_types_str = ', '.join(available_types)
+
     parser = argparse.ArgumentParser(
         description="Code Index MCP CLI Tool",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
+        epilog=f"""
 Examples:
   # Index a directory
   uv run python cli.py index /path/to/project
@@ -222,14 +258,28 @@ Examples:
   # Index with custom database
   uv run python cli.py index /path/to/project --db-path my_index.db
 
-  # Query for all functions
-  uv run python cli.py query "*" --symbol-type function
+  # Query for all classes
+  uv run python cli.py query "*" --symbol-type class
 
   # Query with multiple filters
   uv run python cli.py query "User*" --symbol-type class --symbol-type function --path-pattern "src/**"
 
   # Query with context
   uv run python cli.py query "getUser" --include-context properties --include-context relationships
+
+SYMBOL TYPES:
+  Available: {symbol_types_str}
+
+PATTERN MATCHING:
+  The 'pattern' parameter searches symbol names using glob-style wildcards (*, ?).
+  Examples: "User*", "*Handler", "get_*", "Base*"
+
+USAGE NOTES:
+  - Use --symbol-type multiple times to search multiple types
+  - --symbol-type also supports comma-separated values: --symbol-type "class,function"
+  - Pattern "*" matches all symbols of the specified type(s)
+  - File paths use glob patterns (e.g., "src/**" matches all files in src/)
+  - Language filter uses exact matches (e.g., "python", "javascript")
         """
     )
 

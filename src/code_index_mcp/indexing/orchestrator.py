@@ -1,6 +1,9 @@
 import importlib
+import os
 import pkgutil
 import sqlite3
+import traceback
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Type
 
@@ -17,7 +20,8 @@ from .writer import IndexWriter
 
 
 class IndexingOrchestrator:
-    def __init__(self, project_root: str, db_service, logger: Optional[IndexingLogger] = None):
+    def __init__(self, project_root: str, db_service, logger: Optional[IndexingLogger] = None,
+                 catch_exceptions: bool = False, exception_log_file: Optional[str] = None):
         self.project_root = project_root
         self.logger = logger or IndexingLogger(enabled=False)
         self.ignore_handler = IgnoreHandler(project_root)
@@ -37,6 +41,12 @@ class IndexingOrchestrator:
 
         self.db_service = db_service
         self.db_connection = db_service.get_connection()
+
+        # Exception handling configuration
+        self.catch_exceptions = catch_exceptions
+        self.exception_log_file = exception_log_file
+        self.exceptions = []  # RAM storage for exceptions
+        self.max_exceptions = 1000  # Prevent OOM with bounded collection
 
     def _get_package_name(self, subpackage: str) -> str:
         """Build package name relative to our base package."""
@@ -158,7 +168,19 @@ class IndexingOrchestrator:
                     language_definition = self._get_language_definition(language)
                     self.logger.current_context['language'] = language
                     writer.set_language_definition(language_definition)
-                    self.run_phase_1_symbol_extraction(file_path, language, source_code, writer)
+
+                    if self.catch_exceptions:
+                        try:
+                            self.run_phase_1_symbol_extraction(file_path, language, source_code, writer)
+                        except Exception as e:
+                            context = {
+                                'file': file_path,
+                                'language': language,
+                                'phase': 'Phase 1'
+                            }
+                            self._handle_exception("Phase 1", e, context)
+                    else:
+                        self.run_phase_1_symbol_extraction(file_path, language, source_code, writer)
             self.logger.mustLog("Orchestrator", "Completed Phase 1.")
 
         # Phase 2: Intermediate Relationship Resolution
@@ -170,7 +192,18 @@ class IndexingOrchestrator:
                 self.logger.current_context['language'] = lang
                 language_definition = self._get_language_definition(lang)
                 writer.set_language_definition(language_definition)
-                self.run_phase_2_intermediate_resolution(writer, reader, lang)
+
+                if self.catch_exceptions:
+                    try:
+                        self.run_phase_2_intermediate_resolution(writer, reader, lang)
+                    except Exception as e:
+                        context = {
+                            'language': lang,
+                            'phase': 'Phase 2'
+                        }
+                        self._handle_exception("Phase 2", e, context)
+                else:
+                    self.run_phase_2_intermediate_resolution(writer, reader, lang)
             self.logger.mustLog("Orchestrator", "Completed Phase 2.")
 
         # Phase 3: Final Relationship Resolution
@@ -180,7 +213,18 @@ class IndexingOrchestrator:
                 self.logger.current_context['language'] = lang
                 language_definition = self._get_language_definition(lang)
                 writer.set_language_definition(language_definition)
-                self.run_phase_3_final_resolution(writer, reader, lang)
+
+                if self.catch_exceptions:
+                    try:
+                        self.run_phase_3_final_resolution(writer, reader, lang)
+                    except Exception as e:
+                        context = {
+                            'language': lang,
+                            'phase': 'Phase 3'
+                        }
+                        self._handle_exception("Phase 3", e, context)
+                else:
+                    self.run_phase_3_final_resolution(writer, reader, lang)
             self.logger.mustLog("Orchestrator", "Completed Phase 3.")
 
         # Stop total timing and print profiling report only if profiling was enabled
@@ -190,6 +234,11 @@ class IndexingOrchestrator:
 
             if hasattr(self.logger, 'print_profiling_report'):
                 self.logger.print_profiling_report()
+
+        # Generate and display exception summary if any exceptions occurred
+        if self.catch_exceptions and self.exceptions:
+            summary = self._generate_exception_summary()
+            print(summary)
 
         self.logger.mustLog("Orchestrator", "Completed multi-phase indexing process.")
 
@@ -340,3 +389,112 @@ class IndexingOrchestrator:
                 del remaining[rel_type]
 
         return sorted_handlers
+
+    def _handle_exception(self, phase: str, error: Exception, context: Dict[str, Any]):
+        """
+        Handle an exception by logging it and storing it for summary reporting.
+
+        Args:
+            phase: The phase where the exception occurred (e.g., "Phase 1", "Phase 2")
+            error: The exception that occurred
+            context: Additional context information about where the exception occurred
+        """
+        # Always log to file if configured
+        if self.exception_log_file:
+            self._log_exception_to_file(phase, error, context)
+
+        # Store in RAM if catching exceptions (with bounds checking)
+        if self.catch_exceptions and len(self.exceptions) < self.max_exceptions:
+            exception_info = {
+                'phase': phase,
+                'error': str(error),
+                'context': context,
+                'timestamp': datetime.now(),
+                'traceback': traceback.format_exc()
+            }
+            self.exceptions.append(exception_info)
+
+        # Log to console for immediate feedback
+        error_msg = str(error)
+        if len(error_msg) > 200:  # Truncate very long error messages
+            error_msg = error_msg[:200] + "..."
+        self.logger.log("Orchestrator", f"Exception in {phase}: {error_msg}")
+
+    def _log_exception_to_file(self, phase: str, error: Exception, context: Dict[str, Any]):
+        """
+        Log exception details to a file for detailed debugging.
+
+        Args:
+            phase: The phase where the exception occurred
+            error: The exception that occurred
+            context: Additional context information
+        """
+        try:
+            with open(self.exception_log_file, 'a', encoding='utf-8') as f:
+                f.write(f"[{datetime.now().isoformat()}] {phase} Exception\n")
+                f.write(f"Error: {error}\n")
+
+                # Write context information
+                if context:
+                    f.write("Context:\n")
+                    for key, value in context.items():
+                        f.write(f"  {key}: {value}\n")
+
+                # Write full traceback
+                f.write("Traceback:\n")
+                f.write(traceback.format_exc())
+                f.write("\n" + "="*80 + "\n")
+        except Exception as log_error:
+            # If we can't write to the log file, at least log to console
+            self.logger.log("Orchestrator", f"Failed to write exception to log file: {log_error}")
+
+    def _generate_exception_summary(self) -> str:
+        """
+        Generate a human-readable summary of all exceptions that occurred.
+
+        Returns:
+            A formatted string containing the exception summary
+        """
+        if not self.exceptions:
+            return ""
+
+        # Group exceptions by phase
+        by_phase = {}
+        for exc in self.exceptions:
+            phase = exc['phase']
+            if phase not in by_phase:
+                by_phase[phase] = []
+            by_phase[phase].append(exc)
+
+        # Generate summary
+        summary_lines = ["\n🚨  INDEXING COMPLETED WITH EXCEPTIONS - INDEX MAY BE INCOMPLETE:\n"]
+
+        total_exceptions = 0
+        for phase in sorted(by_phase.keys()):
+            phase_exceptions = by_phase[phase]
+            summary_lines.append(f"⚠️  {phase}: {len(phase_exceptions)} exceptions")
+
+            # Show first few examples (max 3 per phase)
+            for i, exc in enumerate(phase_exceptions[:3]):
+                context_str = ""
+                if 'file' in exc['context']:
+                    context_str = f" ({exc['context']['file']})"
+                elif 'handler' in exc['context']:
+                    context_str = f" ({exc['context']['handler']})"
+
+                error_preview = exc['error'][:100] + "..." if len(exc['error']) > 100 else exc['error']
+                summary_lines.append(f"  - {error_preview}{context_str}")
+
+            if len(phase_exceptions) > 3:
+                summary_lines.append(f"  ... and {len(phase_exceptions) - 3} more")
+
+            summary_lines.append("")
+            total_exceptions += len(phase_exceptions)
+
+        if self.exception_log_file:
+            summary_lines.append(f"📝 Detailed logs written to: {self.exception_log_file}")
+
+        summary_lines.append(f"\n⚠️  Total exceptions: {total_exceptions} (indexing continued but may be incomplete)")
+        summary_lines.append("   Some code relationships may not have been indexed due to errors.")
+
+        return "\n".join(summary_lines)
