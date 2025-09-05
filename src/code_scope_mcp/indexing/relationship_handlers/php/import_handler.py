@@ -25,64 +25,7 @@ class PhpImportHandler(BaseImportHandler):
             (require_once_expression) @from_import_stmt
         """]
 
-    def extract_from_ast(self, tree: 'Tree', writer, reader, file_qname: str):
-        """Extract import relationships from PHP include/require statements."""
-        self.logger.log(self.__class__.__name__, f"DEBUG: PhpImportHandler.extract_from_ast called for {file_qname}")
 
-        # Get the file symbol ID for this file
-        file_symbols = reader.find_symbols(qname=file_qname, language=self.language)
-        if not file_symbols:
-            self.logger.log(self.__class__.__name__, f"DEBUG: No file symbol found for {file_qname}")
-            return
-
-        file_symbol_id = file_symbols[0]['id']
-
-        # Get language-specific import queries
-        import_queries = self._get_import_queries()
-
-        # Extract imports using language-specific queries
-        for query_text in import_queries:
-            query = self.language_obj.query(query_text)
-            captures = query.captures(tree.root_node)
-
-            for capture in captures:
-                node = capture[0]
-                capture_name = capture[1]
-
-                if capture_name == "from_import_stmt":
-                    # Extract import details using language-specific method
-                    import_details = self._extract_import_from_node(node)
-                    if not import_details:
-                        continue
-
-                    module_name = import_details['module_name']
-                    imported_names = import_details['imported_names']
-
-                    # Convert module name to file path using language-specific logic
-                    target_file = self._convert_module_to_file_path(module_name)
-
-                    # For PHP includes, we need to import ALL symbols from the target file
-                    # Find all symbols declared in the target file using qname pattern
-                    target_file_qname_pattern = f"{target_file}:%"
-                    all_symbols_in_file = reader.find_symbols(qname=target_file_qname_pattern, match_type="like", language=self.language)
-
-                    self.logger.log(self.__class__.__name__, f"DEBUG: Found {len(all_symbols_in_file)} symbols in {target_file}")
-
-                    # Create import relationships for each symbol in the target file
-                    for symbol in all_symbols_in_file:
-                        if not symbol['qname'].endswith(':__FILE__'):  # Skip the file itself
-                            symbol_name = symbol['name']
-                            writer.add_unresolved_relationship(
-                                source_symbol_id=file_symbol_id,
-                                source_qname=file_qname,
-                                target_name=symbol_name,
-                                rel_type="imports",
-                                needs_type="imports",
-                                target_qname=None,
-                                intermediate_symbol_qname=f"{target_file}:__FILE__",
-                                target_resolver_name="PhpImportHandler"
-                            )
-                            self.logger.log(self.__class__.__name__, f"DEBUG: Created unresolved import: {file_qname} -> {symbol_name} from {target_file}")
 
     def _extract_import_from_node(self, node) -> Optional[dict]:
         """Extract import details from a PHP AST node.

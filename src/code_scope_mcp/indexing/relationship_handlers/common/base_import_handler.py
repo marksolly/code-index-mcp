@@ -92,19 +92,34 @@ class BaseImportHandler(BaseRelationshipHandler, ABC):
                     # Convert module name to file path using language-specific logic
                     target_file = self._convert_module_to_file_path(module_name)
 
-                    # Create unresolved import relationships for each imported symbol
-                    for imported_name in imported_names:
+                    # Handle special case for "import all symbols" (e.g., PHP includes)
+                    if imported_names == ['*']:
+                        # Create a single unresolved relationship that will be expanded during resolution
                         writer.add_unresolved_relationship(
                             source_symbol_id=file_symbol_id,
                             source_qname=file_qname,
-                            target_name=imported_name,
+                            target_name='*',  # Special marker for "all symbols"
                             rel_type="imports",
-                            needs_type="declares_class",  # Remove circular dependency by waiting for class declarations
+                            needs_type="declares_class",
                             target_qname=None,
-                            intermediate_symbol_qname=f"{target_file}:__FILE__",  # Hint about the source file
+                            intermediate_symbol_qname=f"{target_file}:__FILE__",
                             target_resolver_name="BaseImportHandler"
                         )
-                        self.logger.log(self.__class__.__name__, f"DEBUG: Created unresolved import: {file_qname} -> {imported_name} from {target_file}")
+                        self.logger.log(self.__class__.__name__, f"DEBUG: Created unresolved import for all symbols: {file_qname} -> * from {target_file}")
+                    else:
+                        # Create unresolved import relationships for each imported symbol
+                        for imported_name in imported_names:
+                            writer.add_unresolved_relationship(
+                                source_symbol_id=file_symbol_id,
+                                source_qname=file_qname,
+                                target_name=imported_name,
+                                rel_type="imports",
+                                needs_type="declares_class",
+                                target_qname=None,
+                                intermediate_symbol_qname=f"{target_file}:__FILE__",
+                                target_resolver_name="BaseImportHandler"
+                            )
+                            self.logger.log(self.__class__.__name__, f"DEBUG: Created unresolved import: {file_qname} -> {imported_name} from {target_file}")
 
     @abstractmethod
     def _get_import_queries(self) -> list[str]:
@@ -130,39 +145,97 @@ class BaseImportHandler(BaseRelationshipHandler, ABC):
 
     def resolve_immediate(self, writer: 'IndexWriter', reader: 'IndexReader'):
         """
-        Phase 2: Resolve import relationships that can be resolved immediately.
+        Phase 2: Resolve import relationships in dynamic passes until no progress is made.
 
-        Resolves import relationships by finding the imported symbols.
-        This logic is language-agnostic and reusable across languages.
+        This handles order-independent resolution by continuing to resolve imports
+        until no progress is made in a complete cycle, properly handling forward references.
+
+        Unlike the fixed 3-pass approach, this adapts to the complexity of dependency chains.
         """
         self.logger.log(self.__class__.__name__, "DEBUG: BaseImportHandler.resolve_immediate called")
 
-        # Query unresolved 'imports' relationships for this language only
-        unresolved = reader.find_unresolved("imports", language=self.language)
-        self.logger.log(self.__class__.__name__, f"DEBUG: Found {len(unresolved)} unresolved imports relationships")
+        # Dynamic multi-pass resolution to handle arbitrary dependency chains
+        max_passes = 10  # Reasonable upper limit to prevent infinite loops
+        previous_unresolved_count = float('inf')
+        current_pass = 0
+        total_resolved = 0
 
-        for rel in unresolved:
-            self.logger.log(self.__class__.__name__, f"DEBUG: Processing unresolved import: {rel['source_qname']} -> {rel['target_name']}")
+        while current_pass < max_passes:
+            current_pass += 1
+            self.logger.log(self.__class__.__name__, f"DEBUG: Starting pass {current_pass} of import resolution")
 
-            # Try to resolve the import relationship
-            intermediate_qname = rel['intermediate_symbol_qname'] if 'intermediate_symbol_qname' in rel.keys() and rel['intermediate_symbol_qname'] else None
-            target_symbol = self._resolve_import_target(rel['target_name'], intermediate_qname, reader)
+            # Query unresolved 'imports' relationships for this language only
+            unresolved = reader.find_unresolved("imports", language=self.language)
+            unresolved_count = len(unresolved)
+            self.logger.log(self.__class__.__name__, f"DEBUG: Found {unresolved_count} unresolved imports relationships")
 
-            if target_symbol:
-                self.logger.log(self.__class__.__name__, f"DEBUG: Creating resolved import: {rel['source_qname']} -> {target_symbol['qname']}")
-                # Create resolved relationship
-                writer.add_relationship(
-                    source_symbol_id=rel['source_symbol_id'],
-                    target_symbol_id=target_symbol['id'],
-                    rel_type="imports",
-                    source_qname=rel['source_qname'],
-                    target_qname=target_symbol['qname']
-                )
-                # Delete the unresolved relationship
-                writer.delete_unresolved_relationship(rel['id'])
-                self.logger.log(self.__class__.__name__, "DEBUG: Import relationship resolved")
-            else:
-                self.logger.log(self.__class__.__name__, f"DEBUG: Could not resolve import target: {rel['target_name']}")
+            # If no progress made in this pass, we're likely stuck on circular dependencies
+            if unresolved_count == previous_unresolved_count:
+                self.logger.log(self.__class__.__name__, f"DEBUG: No progress in pass {current_pass}, exiting resolution loop")
+                break
+            previous_unresolved_count = unresolved_count
+
+            # If no unresolved imports, we're done
+            if unresolved_count == 0:
+                self.logger.log(self.__class__.__name__, "DEBUG: All imports resolved")
+                break
+
+            resolved_count = 0
+            for rel in unresolved:
+                self.logger.log(self.__class__.__name__, f"DEBUG: Processing unresolved import: {rel['source_qname']} -> {rel['target_name']}")
+
+                # Try to resolve the import relationship
+                intermediate_qname = rel['intermediate_symbol_qname'] if 'intermediate_symbol_qname' in rel.keys() and rel['intermediate_symbol_qname'] else None
+                target_result = self._resolve_import_target(rel['target_name'], intermediate_qname, reader)
+
+                if target_result:
+                    # Handle both single symbol (dict) and multiple symbols (list) cases
+                    if isinstance(target_result, list):
+                        # Multiple symbols case (e.g., PHP includes with '*')
+                        for target_symbol in target_result:
+                            self.logger.log(self.__class__.__name__, f"DEBUG: Creating resolved import: {rel['source_qname']} -> {target_symbol['qname']}")
+                            writer.add_relationship(
+                                source_symbol_id=rel['source_symbol_id'],
+                                target_symbol_id=target_symbol['id'],
+                                rel_type="imports",
+                                source_qname=rel['source_qname'],
+                                target_qname=target_symbol['qname']
+                            )
+                        resolved_count += 1  # Count as one resolved relationship (the '*')
+                        total_resolved += len(target_result)  # But track actual relationships created
+                    else:
+                        # Single symbol case (dict)
+                        self.logger.log(self.__class__.__name__, f"DEBUG: Creating resolved import: {rel['source_qname']} -> {target_result['qname']}")
+                        writer.add_relationship(
+                            source_symbol_id=rel['source_symbol_id'],
+                            target_symbol_id=target_result['id'],
+                            rel_type="imports",
+                            source_qname=rel['source_qname'],
+                            target_qname=target_result['qname']
+                        )
+                        resolved_count += 1
+                        total_resolved += 1
+
+                    # Delete the unresolved relationship (only after processing all targets for '*' case)
+                    writer.delete_unresolved_relationship(rel['id'])
+                    self.logger.log(self.__class__.__name__, "DEBUG: Import relationship resolved")
+                else:
+                    self.logger.log(self.__class__.__name__, f"DEBUG: Could not resolve import target: {rel['target_name']}")
+
+            self.logger.log(self.__class__.__name__, f"DEBUG: Pass {current_pass} resolved {resolved_count} imports")
+
+        # Check remaining unresolved imports
+        final_unresolved = reader.find_unresolved("imports", language=self.language)
+        if final_unresolved:
+            remaining_count = len(final_unresolved)
+            self.logger.log(self.__class__.__name__, f"WARNING: {remaining_count} imports remain unresolved after {current_pass} passes")
+            for rel in final_unresolved:
+                self.logger.log(self.__class__.__name__, f"WARNING: Unresolved import: {rel['source_qname']} -> {rel['target_name']}")
+
+            # Log performance summary
+            self.logger.log(self.__class__.__name__, f"DEBUG: Import resolution summary: {total_resolved} resolved, {remaining_count} unresolved in {current_pass} passes")
+        else:
+            self.logger.log(self.__class__.__name__, f"DEBUG: All {total_resolved} imports resolved successfully in {current_pass} passes")
 
     def _resolve_import_target(self, target_name: str, intermediate_symbol_qname: str, reader: 'IndexReader'):
         """
@@ -176,10 +249,28 @@ class BaseImportHandler(BaseRelationshipHandler, ABC):
             reader: IndexReader instance
 
         Returns:
-            Symbol dict if found, None otherwise
+            Symbol dict if found, list of symbols if target_name='*', None otherwise
         """
         self.logger.log(self.__class__.__name__, f"DEBUG: Resolving import target: {target_name}")
 
+        # Handle special case for "import all symbols" (PHP includes)
+        if target_name == '*':
+            if intermediate_symbol_qname:
+                # Get all symbols from the target file
+                file_name = intermediate_symbol_qname.split(':')[0]
+                target_file_qname_pattern = f"{file_name}:%"
+                all_symbols_in_file = reader.find_symbols(qname=target_file_qname_pattern, match_type="like", language=self.language)
+
+                # Filter out the file itself
+                symbol_list = [symbol for symbol in all_symbols_in_file if not symbol['qname'].endswith(':__FILE__')]
+
+                self.logger.log(self.__class__.__name__, f"DEBUG: Found {len(symbol_list)} symbols to import from {file_name}")
+                return symbol_list if symbol_list else None
+
+            self.logger.log(self.__class__.__name__, f"DEBUG: Cannot resolve '*' import without intermediate_symbol_qname")
+            return None
+
+        # Standard resolution for named symbols
         # If we have an intermediate symbol qname (from from-imports), look there first
         if intermediate_symbol_qname:
             # Look for the symbol in the specified file
