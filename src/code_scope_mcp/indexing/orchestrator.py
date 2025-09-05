@@ -139,7 +139,17 @@ class IndexingOrchestrator:
         Orchestrates the multi-phase indexing process for a list of files,
         after filtering them using .indexerignore rules.
         """
+
         self.logger.mustLog("Orchestrator", "Starting file filtering and indexing process.")
+
+        # Only enable profiling if explicitly requested (not automatically)
+        profiling_enabled = False
+        if hasattr(self.logger, 'profiling_enabled'):
+            profiling_enabled = self.logger.profiling_enabled
+
+        # Start total timing only if profiling is already enabled
+        if profiling_enabled and hasattr(self.logger, 'start_timing'):
+            self.logger.start_timing("entire_pipeline")
 
         files_to_index = []
         scan_log = []
@@ -159,15 +169,6 @@ class IndexingOrchestrator:
 
         writer = IndexWriter(self.db_connection, self.logger)
         reader = IndexReader(self.db_connection, self.logger)
-
-        # Only enable profiling if explicitly requested (not automatically)
-        profiling_enabled = False
-        if hasattr(self.logger, 'profiling_enabled'):
-            profiling_enabled = self.logger.profiling_enabled
-
-        # Start total timing only if profiling is already enabled
-        if profiling_enabled and hasattr(self.logger, 'start_timing'):
-            self.logger.start_timing("total_indexing")
 
         # Phase 1: Symbol Extraction for all files (High-Speed Mode)
         with time_block(self.logger, "phase_1_symbol_extraction"):
@@ -239,7 +240,7 @@ class IndexingOrchestrator:
         # Stop total timing and print profiling report only if profiling was enabled
         if profiling_enabled:
             if hasattr(self.logger, 'stop_timing'):
-                self.logger.stop_timing("total_indexing")
+                self.logger.stop_timing("entire_pipeline")
 
             if hasattr(self.logger, 'print_profiling_report'):
                 self.logger.print_profiling_report()

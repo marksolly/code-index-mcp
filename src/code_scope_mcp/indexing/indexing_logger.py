@@ -236,8 +236,8 @@ class IndexingLogger:
             self.timing_data[operation] = []
         self.timing_data[operation].append(duration)
 
-        # Store total time if this is the total_indexing operation
-        if operation == "total_indexing":
+        # Store total time if this is the entire_pipeline operation
+        if operation == "entire_pipeline":
             self.total_time = duration
 
         if is_db_operation:
