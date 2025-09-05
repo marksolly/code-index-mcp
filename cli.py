@@ -69,8 +69,8 @@ def build_extension_map() -> dict:
     return extension_map
 
 
-def scan_directory(target_dir: str, ignore_handler: IgnoreHandler) -> List[Tuple[str, str, str]]:
-    """Scan directory for files and return (path, language, content) tuples."""
+def scan_directory(target_dir: str, ignore_handler: IgnoreHandler) -> List[str]:
+    """Scan directory for files and return a list of file paths to index."""
     extension_map = build_extension_map()
     files_to_index = []
 
@@ -89,15 +89,8 @@ def scan_directory(target_dir: str, ignore_handler: IgnoreHandler) -> List[Tuple
             # Check extension
             _, ext = os.path.splitext(file)
             if ext in extension_map:
-                try:
-                    with open(file_path, 'r', encoding='utf-8') as f:
-                        content = f.read()
-                    language = extension_map[ext]
-                    files_to_index.append((file_path, language, content))
-                    print(f"Found: {os.path.relpath(file_path, target_dir)} ({language})")
-                except (UnicodeDecodeError, IOError) as e:
-                    print(f"Warning: Could not read {file_path}: {e}")
-                    continue
+                files_to_index.append(file_path)
+                print(f"Found: {os.path.relpath(file_path, target_dir)}")
 
     print(f"Total files to index: {len(files_to_index)}")
     return files_to_index
@@ -125,7 +118,7 @@ def cmd_index(args):
     db_service.initialize_db()
 
     # Setup ignore handler
-    ignore_handler = IgnoreHandler(str(target_dir))
+    ignore_handler = IgnoreHandler()
 
     # Scan directory
     files_to_index = scan_directory(str(target_dir), ignore_handler)
@@ -149,7 +142,6 @@ def cmd_index(args):
     # Set exception log file next to the database file
     exception_log_file = str(db_path) + ".exceptions.log"
     orchestrator = IndexingOrchestrator(
-        str(target_dir),
         db_service,
         logger,
         catch_exceptions=True,
@@ -200,6 +192,61 @@ def get_available_symbol_types():
 
     # Fallback to default types if database not available
     return ['class', 'function', 'method', 'constant', 'file', 'import', 'global', 'variable', 'export', 'namespace']
+
+
+def cmd_update(args):
+    """Handle the update command for incremental indexing."""
+    db_path = Path(args.db_path or "code_index.db").resolve()
+
+    if not db_path.exists():
+        print(f"Error: Database {db_path} does not exist. Run 'index' command first.")
+        return 1
+
+    # Validate target paths
+    target_paths = []
+    for path_str in args.paths:
+        target_path = Path(path_str).resolve()
+
+        if not target_path.exists():
+            print(f"Error: Path {target_path} does not exist")
+            return 1
+
+        target_paths.append(str(target_path))
+
+    print("Incremental update for paths:", target_paths)
+    print(f"Database: {db_path}")
+
+    # Setup database
+    db_service = DatabaseService(str(db_path))
+    db_service.connect()
+
+    # Setup logger
+    logger_filters = {
+        'component_names' : ['Orchestrator']
+    }
+    logger = IndexingLogger(enabled=True, filters=logger_filters)
+
+
+
+    # Enable exception catching for production robustness
+    exception_log_file = str(db_path) + ".update.exceptions.log"
+    orchestrator = IndexingOrchestrator(
+        db_service,
+        logger,
+        incremental_mode=True,  # Enable incremental mode
+        catch_exceptions=True,
+        exception_log_file=exception_log_file
+    )
+
+    # Process files incrementally
+    print("Starting incremental update...")
+    try:
+        orchestrator.process_files(target_paths)
+        print(f"Incremental update complete. Database updated: {db_path}")
+        return 0
+    except Exception as e:
+        print(f"Error during incremental update: {e}")
+        return 1
 
 
 def cmd_query(args):
@@ -291,6 +338,12 @@ USAGE NOTES:
     index_parser.add_argument('--db-path', help='Path to database file (default: code_index.db)')
     index_parser.add_argument('--profile', action='store_true', help='Enable profiling to measure database vs total indexing time')
     index_parser.set_defaults(func=cmd_index)
+
+    # Update command
+    update_parser = subparsers.add_parser('update', help='Incrementally update index for specific files')
+    update_parser.add_argument('paths', nargs='+', help='Files or directories to update')
+    update_parser.add_argument('--db-path', help='Path to database file (default: code_index.db)')
+    update_parser.set_defaults(func=cmd_update)
 
     # Query command
     query_parser = subparsers.add_parser('query', help='Query the index')

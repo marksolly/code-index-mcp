@@ -48,15 +48,12 @@ class BaseTestDefinition(ABC):
         """Returns a list of paths to the sample code files for the language."""
         pass
 
-    def get_files_to_index(self) -> List[tuple[str, str, str]]:
+    def get_files_to_index(self) -> List[str]:
         """
-        Reads sample files and returns them in the format expected by the orchestrator.
+        Returns a list of absolute file paths for the orchestrator to process.
+        The orchestrator will handle reading file contents and language detection.
         """
-        files = []
-        for file_path in self.get_sample_files():
-            with open(file_path, 'r') as f:
-                files.append((os.path.abspath(file_path), self.language_name, f.read()))
-        return files
+        return [os.path.abspath(file_path) for file_path in self.get_sample_files()]
 
     def get_expected_relationships(self) -> List[Dict[str, Any]]:
         """

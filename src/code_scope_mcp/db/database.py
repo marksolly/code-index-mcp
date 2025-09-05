@@ -6,6 +6,7 @@ session, schema, and CRUD operations.
 """
 
 import sqlite3
+import os
 from pathlib import Path
 from typing import Optional, Dict, Any
 from contextlib import contextmanager
@@ -31,6 +32,9 @@ class DatabaseService:
         self._high_speed_enabled = False
         self._original_settings: Dict[str, Any] = {}
         self._dropped_indexes: list[str] = []
+
+        # Locking state
+        self._has_lock = False
 
     def connect(self):
         """Establish a connection to the database with always-on optimizations."""
@@ -162,7 +166,10 @@ class DatabaseService:
             'idx_code_symbols_qname',
             'idx_code_symbols_file_id',
             'idx_relationships_source',
-            'idx_relationships_target'
+            'idx_relationships_target',
+            'idx_code_symbols_last_touched',
+            'idx_relationships_last_touched',
+            'idx_unresolved_relationships_last_touched'
         ]
 
         self._dropped_indexes = []
@@ -186,7 +193,11 @@ class DatabaseService:
             ("idx_code_symbols_file_id", "CREATE INDEX IF NOT EXISTS idx_code_symbols_file_id ON code_symbols(file_id);"),
             ("idx_relationships_source", "CREATE INDEX IF NOT EXISTS idx_relationships_source ON relationships(source_symbol_id);"),
             ("idx_relationships_target", "CREATE INDEX IF NOT EXISTS idx_relationships_target ON relationships(target_symbol_id);"),
-            ("idx_unresolved_lookup", "CREATE INDEX idx_unresolved_lookup ON unresolved_relationships(source_symbol_id, relationship_type_id, target_name, target_qname);")
+            ("idx_unresolved_lookup", "CREATE INDEX idx_unresolved_lookup ON unresolved_relationships(source_symbol_id, relationship_type_id, target_name, target_qname);"),
+            # Incremental indexing indexes
+            ("idx_code_symbols_last_touched", "CREATE INDEX IF NOT EXISTS idx_code_symbols_last_touched ON code_symbols(last_touched);"),
+            ("idx_relationships_last_touched", "CREATE INDEX IF NOT EXISTS idx_relationships_last_touched ON relationships(last_touched);"),
+            ("idx_unresolved_relationships_last_touched", "CREATE INDEX IF NOT EXISTS idx_unresolved_relationships_last_touched ON unresolved_relationships(last_touched);")
         ]
 
         for index_name, create_sql in index_definitions:
@@ -197,6 +208,80 @@ class DatabaseService:
                     pass
 
         self._dropped_indexes = []
+
+
+
+    def acquire_lock(self) -> bool:
+        """
+        Acquire a database-based lock to prevent concurrent indexing operations.
+
+        Uses a simple table-based locking mechanism by inserting a row into indexing_locks.
+        If the insert succeeds, we have the lock. If it fails (duplicate key), someone else has it.
+
+        Returns:
+            True if lock acquired, False if already locked by another process.
+        """
+        if not self.conn:
+            raise RuntimeError("Database connection not established")
+
+        if self._has_lock:
+            return True  # Already have the lock
+
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute("""
+                INSERT OR IGNORE INTO indexing_locks (id, process_id)
+                VALUES (1, ?)
+            """, (os.getpid(),))
+
+            lock_acquired = cursor.rowcount > 0
+            if lock_acquired:
+                self._has_lock = True
+                self.conn.commit()
+
+            return lock_acquired
+
+        except Exception:
+            self.conn.rollback()
+            return False
+        finally:
+            cursor.close()
+
+    def release_lock(self):
+        """
+        Release the database-based lock.
+
+        Removes our row from the indexing_locks table to allow other processes to acquire the lock.
+        """
+        if not self.conn or not self._has_lock:
+            return
+
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute("DELETE FROM indexing_locks WHERE id = 1 AND process_id = ?", (os.getpid(),))
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+        finally:
+            cursor.close()
+            self._has_lock = False
+
+    @contextmanager
+    def indexing_lock(self, timeout: int = 30):
+        """
+        Context manager for indexing lock.
+
+        Automatically acquires and releases the lock around indexing operations.
+        Attempts to acquire lock immediately if not available.
+        """
+        lock_acquired = self.acquire_lock()
+        if not lock_acquired:
+            raise RuntimeError("Could not acquire indexing lock. Another indexing operation may be in progress.")
+
+        try:
+            yield
+        finally:
+            self.release_lock()
 
     def close(self):
         """Close the database connection."""
@@ -240,6 +325,13 @@ class DatabaseService:
         # DDL Statements
         ddl_statements = [
             """
+            CREATE TABLE IF NOT EXISTS indexing_locks (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                process_id INTEGER,
+                started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            """,
+            """
             CREATE TABLE IF NOT EXISTS symbol_types (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL UNIQUE
@@ -272,8 +364,10 @@ class DatabaseService:
                 type_id INTEGER NOT NULL,
                 line_start INTEGER,
                 line_end INTEGER,
+                last_touched TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE,
-                FOREIGN KEY (type_id) REFERENCES symbol_types(id)
+                FOREIGN KEY (type_id) REFERENCES symbol_types(id),
+                UNIQUE(file_id, qname)
             );
             """,
             """
@@ -292,9 +386,11 @@ class DatabaseService:
                 target_symbol_id INTEGER NOT NULL,
                 type_id INTEGER NOT NULL,
                 confidence REAL DEFAULT 1.0,
+                last_touched TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (source_symbol_id) REFERENCES code_symbols(id) ON DELETE CASCADE,
                 FOREIGN KEY (target_symbol_id) REFERENCES code_symbols(id) ON DELETE CASCADE,
-                FOREIGN KEY (type_id) REFERENCES relationship_types(id)
+                FOREIGN KEY (type_id) REFERENCES relationship_types(id),
+                UNIQUE(source_symbol_id, target_symbol_id, type_id)
             );
             """,
             "CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);",
@@ -314,6 +410,7 @@ class DatabaseService:
                 needs_type_id INTEGER NOT NULL, /* type of relationship this symbol pair is waiting on */
                 creator_location TEXT,           /* Format "filename.ext:line_no" */
                 target_resolver_name TEXT,       /* Optional resolver class name */
+                last_touched TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (source_symbol_id) REFERENCES code_symbols (id) ON DELETE CASCADE
             );
             """,

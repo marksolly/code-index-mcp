@@ -4,6 +4,7 @@ import inspect
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from datetime import datetime
 
 from .models import Symbol
 from .languages import LanguageDefinition
@@ -361,3 +362,181 @@ class IndexWriter:
             self.db_connection.commit()
         finally:
             cursor.close()
+
+    @profile_db_operation()
+    def remove_file_from_index(self, file_path: str):
+        """
+        Remove a file and all associated data from the index.
+
+        Uses SQLite CASCADE DELETE to automatically clean up:
+        - All symbols for the file
+        - All relationships involving those symbols
+        - All unresolved relationships for those symbols
+        - All symbol properties for those symbols
+        """
+        cursor = self.db_connection.cursor()
+        try:
+            # Debug: Check if file exists before deletion
+            cursor.execute("SELECT id FROM files WHERE path = ?", (file_path,))
+            file_row = cursor.fetchone()
+
+            if file_row:
+                file_id = file_row["id"]
+                print(f"DEBUG: Removing file from index: {file_path} (ID: {file_id})")
+
+                # Single DELETE triggers full cascade cleanup via foreign key constraints
+                cursor.execute("DELETE FROM files WHERE path = ?", (file_path,))
+                self.db_connection.commit()
+
+                deleted_count = cursor.rowcount
+                if deleted_count > 0:
+                    self.logger.log("IndexWriter", f"Removed file from index (CASCADE): {file_path}")
+                    print(f"DEBUG: Successfully removed file from index: {file_path}")
+                else:
+                    self.logger.log("IndexWriter", f"File not found in index: {file_path}")
+                    print(f"DEBUG: File not found in index: {file_path}")
+
+                return deleted_count > 0
+            else:
+                print(f"DEBUG: File not found in database: {file_path}")
+                return False
+
+        finally:
+            cursor.close()
+
+
+class IndexUpserter(IndexWriter):
+    """Modified writer that UPSERTs instead of plain INSERTs."""
+
+    def __init__(self, *args, session_timestamp=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.session_timestamp = session_timestamp or datetime.now()
+
+    @profile_db_operation()
+    def add_file_symbol(self, symbol: Symbol):
+        """UPSERT file symbols: Insert if new, update timestamp if existing."""
+        if symbol.symbol_type != "file":
+            raise ValueError(f"add_file_symbol called with non-file symbol type '{symbol.symbol_type}'")
+
+        self._validate_qname(symbol.qname, f"add_file_symbol for {symbol.name}")
+        if self.language_definition and symbol.symbol_type not in self.language_definition.supported_symbol_types:
+            raise ValueError(f"Unsupported symbol type '{symbol.symbol_type}' for language '{self.language_definition.language_name}'. Symbol: {symbol.name} ({symbol.qname}) in {symbol.file_path}")
+
+        file_id = self._get_or_create_file_id(symbol.file_path, symbol.language)
+
+        cursor = self.db_connection.cursor()
+        try:
+            cursor.execute("""
+                INSERT INTO code_symbols
+                    (file_id, name, qname, type_id, line_start, last_touched)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(file_id, qname) DO UPDATE SET
+                    line_start = excluded.line_start,
+                    last_touched = excluded.last_touched
+            """, (file_id, symbol.name, symbol.qname, self.symbol_type_ids["file"], symbol.line_number, self.session_timestamp))
+
+            # Get the ID of existing or newly inserted record
+            cursor.execute("SELECT id FROM code_symbols WHERE file_id = ? AND qname = ?", (file_id, symbol.qname))
+            row = cursor.fetchone()
+            if row:
+                symbol.id = row["id"]
+            symbol.file_id = file_id
+            self.db_connection.commit()
+
+            self.logger.log("IndexUpserter", f"add_file_symbol(UPSERT {symbol.qname})")
+            return symbol
+        finally:
+            cursor.close()
+
+    @profile_db_operation()
+    def add_symbol(self, symbol: Symbol):
+        """UPSERT: Insert if new, update timestamp if existing."""
+        # Always call validate_qname
+        self._validate_qname(symbol.qname, f"add_symbol for {symbol.name}")
+        if self.language_definition and symbol.symbol_type not in self.language_definition.supported_symbol_types:
+            raise ValueError(f"Unsupported symbol type '{symbol.symbol_type}' for language '{self.language_definition.language_name}'. Symbol: {symbol.name} ({symbol.qname}) in {symbol.file_path}")
+
+        if not symbol.symbol_type:
+            raise ValueError(f"Symbol has no type: {symbol.name} ({symbol.qname}) in {symbol.file_path}")
+
+        if symbol.symbol_type == "file":
+            raise ValueError("Use add_file_symbol for file symbols, not add_symbol")
+
+        if symbol.file_id is None:
+            raise ValueError(f"Symbol file_id must be provided for non-file symbols: {symbol.name} ({symbol.qname})")
+
+        type_id = self.symbol_type_ids.get(symbol.symbol_type)
+        if type_id is None:
+            raise ValueError(f"Unknown symbol type '{symbol.symbol_type}' for symbol: {symbol.name} ({symbol.qname})")
+
+        cursor = self.db_connection.cursor()
+        try:
+            cursor.execute("""
+                INSERT INTO code_symbols
+                    (file_id, name, qname, type_id, line_start, last_touched)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(file_id, qname) DO UPDATE SET
+                    line_start = excluded.line_start,
+                    last_touched = excluded.last_touched
+            """, (symbol.file_id, symbol.name, symbol.qname, type_id, symbol.line_number, self.session_timestamp))
+            # For UPSERT, get the ID of existing or newly inserted record
+            cursor.execute("SELECT id FROM code_symbols WHERE file_id = ? AND qname = ?", (symbol.file_id, symbol.qname))
+            row = cursor.fetchone()
+            if row:
+                symbol.id = row["id"]
+            self.db_connection.commit()
+            self.logger.log("IndexUpserter", f"add_symbol(UPSERT {symbol.qname})")
+            return symbol
+        finally:
+            cursor.close()
+
+    @profile_db_operation()
+    def add_relationship(self, source_symbol_id: int, target_symbol_id: int, rel_type: str, source_qname: str, target_qname: str, confidence: float = 1.0):
+        """UPSERT relationships."""
+        self._validate_qname(source_qname, "add_relationship source")
+        self._validate_qname(target_qname, "add_relationship target")
+        if self.language_definition and rel_type not in self.language_definition.supported_relationship_types:
+            raise ValueError(f"Unsupported relationship type '{rel_type}' for language '{self.language_definition.language_name}'. Relationship from {source_qname} to {target_qname}.")
+
+        rel_type_id = self.relationship_type_ids.get(rel_type)
+        if rel_type_id is None:
+            self.logger.log("IndexUpserter", f"Unknown relationship type '{rel_type}' when adding relationship.")
+            return
+
+        # For UPSERT on relationships, use unique constraint on source, target, type
+        cursor = self.db_connection.cursor()
+        try:
+            cursor.execute("""
+                INSERT INTO relationships
+                    (source_symbol_id, target_symbol_id, type_id, confidence, last_touched)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(source_symbol_id, target_symbol_id, type_id) DO UPDATE SET
+                    confidence = MAX(excluded.confidence, confidence),
+                    last_touched = excluded.last_touched
+            """, (source_symbol_id, target_symbol_id, rel_type_id, confidence, self.session_timestamp))
+            self.db_connection.commit()
+            self.logger.log("IndexUpserter", f"add_relationship(UPSERT {source_qname} {rel_type} {target_qname})")
+        finally:
+            cursor.close()
+
+    def _execute_relationship_batch(self):
+        """Override batch execution for UPSERT logic."""
+        if not self._relationship_batch:
+            return
+
+        cursor = self.db_connection.cursor()
+        try:
+            for rel in self._relationship_batch:
+                cursor.execute("""
+                    INSERT INTO relationships
+                        (source_symbol_id, target_symbol_id, type_id, confidence, last_touched)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(source_symbol_id, target_symbol_id, type_id) DO UPDATE SET
+                        confidence = MAX(excluded.confidence, confidence),
+                        last_touched = excluded.last_touched
+                """, rel + (self.session_timestamp,))
+            self.db_connection.commit()
+            self.logger.log("IndexUpserter", f"Executed batch UPSERT of {len(self._relationship_batch)} relationships")
+        finally:
+            cursor.close()
+            self._relationship_batch = []

@@ -122,7 +122,7 @@ class TestLanguageSupportSuite(unittest.TestCase):
 
         # Enable strict resolution mode for tests to catch unresolved relationships (unless disabled)
         strict_mode = True if not hasattr(cls, 'no_strict_resolution') else not cls.no_strict_resolution
-        orchestrator = IndexingOrchestrator(project_root, cls.db_service, logger,
+        orchestrator = IndexingOrchestrator(db_service=cls.db_service, logger=logger,
                                           strict_resolution=strict_mode, catch_exceptions=False)
 
         if not strict_mode:
@@ -140,8 +140,8 @@ class TestLanguageSupportSuite(unittest.TestCase):
                         definition = obj()
                         if language_to_test and definition.language_name != language_to_test:
                             continue
-                        for file_path, lang, code in definition.get_files_to_index():
-                            files_to_index.append((file_path, lang, code))
+                        for file_path in definition.get_files_to_index():
+                            files_to_index.append(file_path)
 
         try:
             orchestrator.process_files(files_to_index)

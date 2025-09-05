@@ -1,5 +1,8 @@
 import sqlite3
-from src.code_scope_mcp.db.database import DatabaseService
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+from code_scope_mcp.db.database import DatabaseService
 class RelationshipVerifier:
     def __init__(self, db_service: DatabaseService):
         self.db_service = db_service

@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple, Type
 
 from tree_sitter_languages import get_language, get_parser
 
+from .file_list_builder import FileListBuilder
 from .ignore_handler import IgnoreHandler
 from .indexing_logger import IndexingLogger
 from .languages import LanguageDefinition
@@ -16,18 +17,17 @@ from .reader import IndexReader
 from .relationship_handlers.base_relationship_handler import BaseRelationshipHandler
 from .symbol_extractors.base_symbol_extractor import BaseSymbolExtractor
 from .timing_utils import time_block
-from .writer import IndexWriter
+from .writer import IndexWriter, IndexUpserter
 from .strict_resolution_validator import StrictResolutionValidator
 from .exceptions import StrictModeViolationException
 
 
 class IndexingOrchestrator:
-    def __init__(self, project_root: str, db_service, logger: Optional[IndexingLogger] = None,
+    def __init__(self, db_service=None, logger: Optional[IndexingLogger] = None,
                  catch_exceptions: bool = False, exception_log_file: Optional[str] = None,
-                 strict_resolution: bool = False):
-        self.project_root = project_root
+                 strict_resolution: bool = False, incremental_mode: bool = False):
         self.logger = logger or IndexingLogger(enabled=False)
-        self.ignore_handler = IgnoreHandler(project_root)
+        self.ignore_handler = IgnoreHandler()
         self.symbol_extractor_classes: Dict[str, Type[BaseSymbolExtractor]] = {}
         self.language_definitions: Dict[str, LanguageDefinition] = self._discover_language_definitions()
 
@@ -56,6 +56,14 @@ class IndexingOrchestrator:
         self.strict_validator = StrictResolutionValidator(
             self.db_connection, self.logger, strict_resolution
         )
+
+        # Incremental mode configuration
+        self.incremental_mode = incremental_mode
+        if incremental_mode:
+            self.session_timestamp = datetime.now()
+            self.logger.mustLog("Orchestrator", "Operating in incremental mode")
+        else:
+            self.session_timestamp = None
 
     def _get_package_name(self, subpackage: str) -> str:
         """Build package name relative to our base package."""
@@ -134,127 +142,206 @@ class IndexingOrchestrator:
             raise ValueError(f"No symbol extractor found for language: {language}")
         return extractor_class
 
-    def process_files(self, all_files: List[Tuple[str, str, str]]):
+    def process_files(self, file_paths: List[str]):
         """
         Orchestrates the multi-phase indexing process for a list of files,
         after filtering them using .indexerignore rules.
+        Loads file contents and detects languages just-in-time.
         """
 
         self.logger.mustLog("Orchestrator", "Starting file filtering and indexing process.")
 
-        # Only enable profiling if explicitly requested (not automatically)
-        profiling_enabled = False
-        if hasattr(self.logger, 'profiling_enabled'):
-            profiling_enabled = self.logger.profiling_enabled
+        # Acquire lock
+        lock_acquired = self.db_service.acquire_lock()
+        if not lock_acquired:
+            raise RuntimeError("Could not acquire indexing lock. Another indexing operation may be in progress.")
+        self.logger.mustLog("Orchestrator", "Indexing lock acquired successfully.")
 
-        # Start total timing only if profiling is already enabled
-        if profiling_enabled and hasattr(self.logger, 'start_timing'):
-            self.logger.start_timing("entire_pipeline")
+        try:
+            # Only enable profiling if explicitly requested (not automatically)
+            profiling_enabled = False
+            if hasattr(self.logger, 'profiling_enabled'):
+                profiling_enabled = self.logger.profiling_enabled
 
-        files_to_index = []
-        scan_log = []
-        for file_path, language, source_code in all_files:
-            if self.ignore_handler.is_ignored(file_path):
-                scan_log.append(f"- {file_path}")
+            # Start total timing only if profiling is already enabled
+            if profiling_enabled and hasattr(self.logger, 'start_timing'):
+                self.logger.start_timing("entire_pipeline")
+
+            # Use FileListBuilder to prepare valid file paths and deletion paths
+            file_list_builder = FileListBuilder(self.logger, self.db_connection, self.incremental_mode)
+            valid_file_paths, delete_file_paths, primary_update_targets = file_list_builder.prepare(file_paths, self.ignore_handler)
+
+            # Store primary update targets for targeted cleanup.
+            # If file_paths contained any directories, these will have been expanded to full file lists.
+            self._original_input_paths = set(primary_update_targets)
+
+            # Choose writer based on mode (needed for deletions)
+            if self.incremental_mode:
+                writer = IndexUpserter(self.db_connection, self.logger, session_timestamp=self.session_timestamp)
+                self.logger.mustLog("Orchestrator", "Using IndexUpserter for incremental indexing")
             else:
-                scan_log.append(f"+ {file_path}")
-                files_to_index.append((file_path, language, source_code))
+                writer = IndexWriter(self.db_connection, self.logger)
+                self.logger.mustLog("Orchestrator", "Using IndexWriter for full indexing")
+            self.writer = writer
 
-        # Output the scan log
-        print("\n".join(scan_log))
+            # Process file deletions first (only in incremental mode)
+            if self.incremental_mode and delete_file_paths:
+                self.logger.mustLog("Orchestrator", f"Processing {len(delete_file_paths)} file deletions")
+                for delete_path in delete_file_paths:
+                    self._remove_deleted_file(delete_path)
 
-        if not files_to_index:
-            self.logger.mustLog("Orchestrator", "No files to index after filtering.")
-            return
+            if not valid_file_paths:
+                self.logger.mustLog("Orchestrator", "No files to index after filtering.")
+                return
 
-        writer = IndexWriter(self.db_connection, self.logger)
-        reader = IndexReader(self.db_connection, self.logger)
+            reader = IndexReader(self.db_connection, self.logger)
 
-        # Phase 1: Symbol Extraction for all files (High-Speed Mode)
-        with time_block(self.logger, "phase_1_symbol_extraction"):
-            self.logger.mustLog("Orchestrator", "Beginning Phase 1: Symbol Extraction (High-Speed Mode).")
-            with self.db_service.high_speed_mode():
-                for file_path, language, source_code in files_to_index:
-                    language_definition = self._get_language_definition(language)
-                    self.logger.current_context['language'] = language
+            # Phase 1: Symbol Extraction for all files
+            with time_block(self.logger, "phase_1_symbol_extraction"):
+                self.logger.mustLog("Orchestrator", "Beginning Phase 1: Symbol Extraction.")
+                try:
+                    if not self.incremental_mode:
+                        self.db_service.enable_high_speed_mode()
+                        self.logger.mustLog("Orchestrator", "High speed non-incremental mode on.")
+
+                    # Build extension to language mapping for Phase 1 processing
+                    extension_map = self._build_extension_map()
+
+                    for file_path in valid_file_paths:
+                        # Determine language for this file
+                        _, ext = os.path.splitext(file_path)
+                        language = extension_map.get(ext)
+                        if not language:
+                            self.logger.log("Orchestrator", f"Skipping {file_path}: unsupported file type {ext}")
+                            continue
+
+                        language_definition = self._get_language_definition(language)
+                        self.logger.current_context['language'] = language
+                        writer.set_language_definition(language_definition)
+
+                        # Load file content immediately before processing
+                        try:
+                            with open(file_path, 'r', encoding='utf-8') as f:
+                                source_code = f.read()
+                        except (UnicodeDecodeError, IOError) as e:
+                            self.logger.log("Orchestrator", f"Skipping {file_path}: {e}")
+                            continue
+
+                        # Process the file immediately and free memory
+                        if self.catch_exceptions:
+                            try:
+                                self.run_phase_1_symbol_extraction(file_path, language, source_code, writer)
+                            except Exception as e:
+                                context = {
+                                    'file': file_path,
+                                    'language': language,
+                                    'phase': 'Phase 1'
+                                }
+                                self._handle_exception("Phase 1", e, context)
+                        else:
+                            self.run_phase_1_symbol_extraction(file_path, language, source_code, writer)
+
+                        # Free memory by deleting the source code after use
+                        del source_code
+                finally:
+                    self.db_service.disable_high_speed_mode()
+                self.logger.mustLog("Orchestrator", "Completed Phase 1.")
+
+            # Phase 2: Intermediate Relationship Resolution
+            with time_block(self.logger, "phase_2_intermediate_resolution"):
+                self.logger.mustLog("Orchestrator", "Beginning Phase 2: Intermediate Resolution.")
+                # Get all unique languages from the discovered language definitions
+                unique_languages = list(self.language_definitions.keys())
+                for lang in unique_languages:
+                    self.logger.current_context['language'] = lang
+                    language_definition = self._get_language_definition(lang)
                     writer.set_language_definition(language_definition)
 
                     if self.catch_exceptions:
                         try:
-                            self.run_phase_1_symbol_extraction(file_path, language, source_code, writer)
+                            self.run_phase_2_intermediate_resolution(writer, reader, lang)
                         except Exception as e:
                             context = {
-                                'file': file_path,
-                                'language': language,
-                                'phase': 'Phase 1'
+                                'language': lang,
+                                'phase': 'Phase 2'
                             }
-                            self._handle_exception("Phase 1", e, context)
+                            self._handle_exception("Phase 2", e, context)
                     else:
-                        self.run_phase_1_symbol_extraction(file_path, language, source_code, writer)
-            self.logger.mustLog("Orchestrator", "Completed Phase 1.")
-
-        # Phase 2: Intermediate Relationship Resolution
-        with time_block(self.logger, "phase_2_intermediate_resolution"):
-            self.logger.mustLog("Orchestrator", "Beginning Phase 2: Intermediate Resolution.")
-            # Get all unique languages from the discovered language definitions
-            unique_languages = list(self.language_definitions.keys())
-            for lang in unique_languages:
-                self.logger.current_context['language'] = lang
-                language_definition = self._get_language_definition(lang)
-                writer.set_language_definition(language_definition)
-
-                if self.catch_exceptions:
-                    try:
                         self.run_phase_2_intermediate_resolution(writer, reader, lang)
-                    except Exception as e:
-                        context = {
-                            'language': lang,
-                            'phase': 'Phase 2'
-                        }
-                        self._handle_exception("Phase 2", e, context)
-                else:
-                    self.run_phase_2_intermediate_resolution(writer, reader, lang)
-            self.logger.mustLog("Orchestrator", "Completed Phase 2.")
+                self.logger.mustLog("Orchestrator", "Completed Phase 2.")
 
-        # Phase 3: Final Relationship Resolution
-        with time_block(self.logger, "phase_3_final_resolution"):
-            self.logger.mustLog("Orchestrator", "Beginning Phase 3: Final Resolution.")
-            for lang in unique_languages:
-                self.logger.current_context['language'] = lang
-                language_definition = self._get_language_definition(lang)
-                writer.set_language_definition(language_definition)
+            # Phase 3: Final Relationship Resolution
+            with time_block(self.logger, "phase_3_final_resolution"):
+                self.logger.mustLog("Orchestrator", "Beginning Phase 3: Final Resolution.")
+                for lang in unique_languages:
+                    self.logger.current_context['language'] = lang
+                    language_definition = self._get_language_definition(lang)
+                    writer.set_language_definition(language_definition)
 
-                if self.catch_exceptions:
-                    try:
+                    if self.catch_exceptions:
+                        try:
+                            self.run_phase_3_final_resolution(writer, reader, lang)
+                        except Exception as e:
+                            context = {
+                                'language': lang,
+                                'phase': 'Phase 3'
+                            }
+                            self._handle_exception("Phase 3", e, context)
+                    else:
                         self.run_phase_3_final_resolution(writer, reader, lang)
-                    except Exception as e:
-                        context = {
-                            'language': lang,
-                            'phase': 'Phase 3'
-                        }
-                        self._handle_exception("Phase 3", e, context)
-                else:
-                    self.run_phase_3_final_resolution(writer, reader, lang)
-            self.logger.mustLog("Orchestrator", "Completed Phase 3.")
+                self.logger.mustLog("Orchestrator", "Completed Phase 3.")
 
-        # Stop total timing and print profiling report only if profiling was enabled
-        if profiling_enabled:
-            if hasattr(self.logger, 'stop_timing'):
-                self.logger.stop_timing("entire_pipeline")
+            # Stop total timing and print profiling report only if profiling was enabled
+            if profiling_enabled:
+                if hasattr(self.logger, 'stop_timing'):
+                    self.logger.stop_timing("entire_pipeline")
 
-            if hasattr(self.logger, 'print_profiling_report'):
-                self.logger.print_profiling_report()
+                if hasattr(self.logger, 'print_profiling_report'):
+                    self.logger.print_profiling_report()
 
-        # Generate and display exception summary if any exceptions occurred
-        if self.catch_exceptions and self.exceptions:
-            summary = self._generate_exception_summary()
-            print(summary)
+            # Generate and display exception summary if any exceptions occurred
+            if self.catch_exceptions and self.exceptions:
+                summary = self._generate_exception_summary()
+                print(summary)
 
-        # Final strict resolution validation - check for any remaining unresolved relationships
-        if self.strict_resolution:
-            self.strict_validator.validate_final_state(self.catch_exceptions)
+            # Cleanup phase for incremental mode - remove untouched records
+            if self.incremental_mode:
+                self._cleanup_untouched_records(valid_file_paths, self.session_timestamp)
+                self.logger.mustLog("Orchestrator", "Completed cleanup of untouched records")
 
-        self.logger.mustLog("Orchestrator", "Completed multi-phase indexing process.")
+            # Final strict resolution validation - check for any remaining unresolved relationships
+            if self.strict_resolution:
+                self.strict_validator.validate_final_state(self.catch_exceptions)
+
+            self.logger.mustLog("Orchestrator", "Completed multi-phase indexing process.")
+
+        finally:
+            # Ensure lock is always released
+            self.db_service.release_lock()
+            self.logger.mustLog("Orchestrator", "Indexing lock released.")
+
+    def remove_file_from_index(self, file_path: str, language: str):
+        """
+        Remove a file and all its associated data from the index.
+
+        This is the orchestrator-level passthrough to the writer that handles
+        file deletion with automatic CASCADE cleanup of symbols and relationships.
+        """
+        print(f"DEBUG: Orchestrator.remove_file_from_index called: {file_path}")
+
+        # Set language definition for validation
+        language_definition = self._get_language_definition(language)
+        self.writer.set_language_definition(language_definition)
+
+        # Delegate to writer for the actual deletion
+        success = self.writer.remove_file_from_index(file_path)
+
+        if success:
+            self.logger.mustLog("Orchestrator", f"Removed file from index: {file_path}")
+        else:
+            self.logger.mustLog("Orchestrator", f"File not found in index: {file_path}")
+
+        return success
 
     def run_phase_1_symbol_extraction(self, file_path: str, language: str, source_code: str, writer: IndexWriter):
         """Phase 1: Extract symbols and create unresolved relationships"""
@@ -408,6 +495,108 @@ class IndexingOrchestrator:
                 del remaining[rel_type]
 
         return sorted_handlers
+
+    def _build_extension_map(self) -> Dict[str, str]:
+        """Build extension to language mapping from language definitions."""
+        extension_map = {}
+
+        # Discover language definitions (same way as orchestrator)
+        for language_name, definition in self.language_definitions.items():
+            if hasattr(definition, 'file_extensions'):
+                for ext in definition.file_extensions:
+                    extension_map[ext] = language_name
+
+        return extension_map
+
+    def _remove_deleted_file(self, file_path: str):
+        """
+        Remove a deleted file and all its associated data from the index.
+        Uses the writer's remove_file_from_index method with CASCADE cleanup.
+        """
+
+        try:
+            success = self.writer.remove_file_from_index(file_path)
+            if success:
+                self.logger.log("Orchestrator", f"Removed file from index: {file_path}")
+            else:
+                self.logger.log("Orchestrator", f"File not found in index (may have been already removed): {file_path}")
+        except Exception as e:
+            self.logger.log("Orchestrator", f"Error removing file from index: {file_path} - {e}")
+            # Don't re-raise - we don't want deletion errors to stop indexing
+
+    def _cleanup_untouched_records(self, file_paths: List[str], session_timestamp: datetime):
+        """
+        Clean up records associated with processed files but not touched during the incremental session.
+
+        This removes symbols, relationships, and unresolved relationships that belong to files that were
+        processed in this incremental session but weren't updated (meaning they were removed/changed).
+        Uses targeted cleanup to only affect files that were explicitly supposed to be re-indexed.
+        """
+        if not file_paths:
+            return
+
+        self.logger.mustLog("Orchestrator", f"Starting targeted cleanup of untouched records for {len(file_paths)} files")
+
+        cursor = self.db_connection.cursor()
+        try:
+            # Determine which files were in the original input (before dependency discovery)
+            # This is crucial: we only want to cleanup files that were explicitly requested
+            # Not files that were discovered as dependencies and added automatically
+            original_input_paths = set()
+            if hasattr(self, '_original_input_paths'):
+                # Use the original input paths if available
+                original_input_paths = self._original_input_paths
+            else:
+                # Fallback: assume all files should be cleaned up (old behavior)
+                original_input_paths = set(file_paths)
+
+            if not original_input_paths:
+                self.logger.mustLog("Orchestrator", "No input files to cleanup")
+                return
+
+            # Delete symbols from ORIGINAL input files only (not dependency-discovered files)
+            symbols_deleted = cursor.execute("""
+                DELETE FROM code_symbols
+                WHERE file_id IN (
+                    SELECT id FROM files WHERE path IN ({})
+                )
+                AND last_touched < ?
+            """.format(','.join('?' for _ in original_input_paths)),
+            tuple(original_input_paths) + (session_timestamp,)).rowcount
+
+            # Delete only OUTBOUND relationships from ORIGINAL input files
+            # This preserves inbound relationships to these files (preserving relationships from dependency files)
+            relationships_deleted = cursor.execute("""
+                DELETE FROM relationships
+                WHERE last_touched < ?
+                AND source_symbol_id IN (
+                    SELECT cs.id FROM code_symbols cs
+                    JOIN files f ON cs.file_id = f.id
+                    WHERE f.path IN ({})
+                )
+            """.format(','.join('?' for _ in original_input_paths)),
+            (session_timestamp,) + tuple(original_input_paths)).rowcount
+
+            # Delete unresolved relationships from ORIGINAL input files only
+            unresolved_deleted = cursor.execute("""
+                DELETE FROM unresolved_relationships
+                WHERE last_touched < ?
+                AND source_symbol_id IN (
+                    SELECT cs.id FROM code_symbols cs
+                    JOIN files f ON cs.file_id = f.id
+                    WHERE f.path IN ({})
+                )
+            """.format(','.join('?' for _ in original_input_paths)),
+            (session_timestamp,) + tuple(original_input_paths)).rowcount
+
+            self.db_connection.commit()
+
+            self.logger.mustLog("Orchestrator",
+                f"Targeted cleanup complete: {symbols_deleted} symbols, {relationships_deleted} relationships, "
+                f"{unresolved_deleted} unresolved relationships removed from {len(original_input_paths)} input files")
+
+        finally:
+            cursor.close()
 
 
 
