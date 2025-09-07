@@ -549,5 +549,10 @@ def main():
     if not new_result.wasSuccessful():
         sys.exit(1)
 
+    # Declare failure if --no-strict-resolution was used, even if tests pass
+    if args.no_strict_resolution:
+        print("❌ Test suite failed because --no-strict-resolution was used.")
+        sys.exit(1)
+
 if __name__ == '__main__':
     main()

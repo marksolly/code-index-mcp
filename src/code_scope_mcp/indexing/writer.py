@@ -286,7 +286,7 @@ class IndexWriter:
         self._validate_qname(source_qname, "add_relationship source")
         self._validate_qname(target_qname, "add_relationship target")
         if self.language_definition and rel_type not in self.language_definition.supported_relationship_types:
-            raise ValueError(f"Unsupported relationship type '{rel_type}' for language '{self.language_definition.language_name}'. Relationship from {source_qname} to {target_qname}.")
+            raise ValueError(f"Relationship type not found '{rel_type}' for language '{self.language_definition.language_name}'. Relationship from {source_qname} to {target_qname}.")
 
         rel_type_id = self.relationship_type_ids.get(rel_type)
         if rel_type_id is None:
@@ -337,7 +337,7 @@ class IndexWriter:
             self._validate_qname(target_qname, "add_unresolved_relationship target")
 
         if self.language_definition and rel_type not in self.language_definition.supported_relationship_types:
-            raise ValueError(f"Unsupported relationship type '{rel_type}' for language '{self.language_definition.language_name}'. Unresolved relationship from ID {source_symbol_id} {source_qname} to {target_name}.")
+            raise ValueError(f"Relationship type not found '{rel_type}' for language '{self.language_definition.language_name}'. Unresolved relationship from ID {source_symbol_id} {source_qname} to {target_name}.")
 
         rel_type_id = self.relationship_type_ids.get(rel_type)
         needs_type_id = self.relationship_type_ids.get(needs_type)
@@ -531,7 +531,7 @@ class IndexUpserter(IndexWriter):
         self._validate_qname(source_qname, "add_relationship source")
         self._validate_qname(target_qname, "add_relationship target")
         if self.language_definition and rel_type not in self.language_definition.supported_relationship_types:
-            raise ValueError(f"Unsupported relationship type '{rel_type}' for language '{self.language_definition.language_name}'. Relationship from {source_qname} to {target_qname}.")
+            raise ValueError(f"Relationship type not found '{rel_type}' for language '{self.language_definition.language_name}'. Relationship from {source_qname} to {target_qname}.")
 
         rel_type_id = self.relationship_type_ids.get(rel_type)
         if rel_type_id is None:

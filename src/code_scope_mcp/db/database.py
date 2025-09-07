@@ -421,7 +421,7 @@ class DatabaseService:
             cursor.execute(statement)
 
         # Pre-populate lookup tables
-        symbol_types = ['file', 'function', 'class', 'method', 'constant', 'import', 'global', 'variable', 'export', 'namespace']
+        symbol_types = ['file', 'function', 'class', 'method', 'constant', 'import', 'global', 'variable', 'export', 'namespace', 'struct', 'typedef', 'enum']
 
         # Relationship types with display names for reports
         # Format: (name, outbound_display, inbound_display)
@@ -435,10 +435,15 @@ class DatabaseService:
             ('declares_class_method',   'has_method',      'declared_by'),
             ('declares_class',          'declares',        'declared_by'),
             ('declares_constant',       'declares',        'declared_by'),
+            ('declares_enum',           'declares',        'declared_by'),
+            ('declares_struct',         'declares',        'declared_by'),
+            ('declares_typedef',        'declares',        'declared_by'),
             ('references_variable',     'references',      'referenced_by'),
             ('overrides',               'overrides',       'overridden_by'),
             ('defines_namespace',       'defines',         'defined_by'),
-            ('is_instance_of',          'is_instance_of',  'has_instance')
+            ('is_instance_of',          'is_instance_of',  'has_instance'),
+            ('uses',                    'uses',            'used_by'),
+            ('type_of',                 'type_of',         'has_type')
         ]
 
         for s_type in symbol_types:
