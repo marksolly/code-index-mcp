@@ -35,7 +35,7 @@ if project_root not in sys.path:
 
 from src.code_scope_mcp.db.database import DatabaseService
 from src.code_scope_mcp.indexing.orchestrator import IndexingOrchestrator
-from src.code_scope_mcp.indexing.indexing_logger import IndexingLogger, ComponentRegistry
+from src.code_scope_mcp.indexing.indexing_logger import IndexingLogger, BufferedIndexingLogger, ComponentRegistry
 from src.code_scope_mcp.indexing.exceptions import StrictModeViolationException
 from test.relationship_verifier import RelationshipVerifier
 from test.lang_definitions.base_test_definition import BaseTestDefinition
@@ -70,7 +70,7 @@ class TestLanguageSupportSuite(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.rebuild_index()
+        cls.rebuild_index(buffer_logs=True)
 
     @classmethod
     def tearDownClass(cls):
@@ -78,7 +78,7 @@ class TestLanguageSupportSuite(unittest.TestCase):
             cls.db_service.close()
 
     @classmethod
-    def rebuild_index(cls):
+    def rebuild_index(cls, buffer_logs=True):
         # If already initialized and not in debug mode, just ensure connection is active
         if cls.db_service and not cls.debug_options.language:
             if not cls.db_service.conn:
@@ -93,31 +93,40 @@ class TestLanguageSupportSuite(unittest.TestCase):
         cls.db_service.delete_db()
         cls.db_service.initialize_db()
 
-        logger = IndexingLogger(enabled=False)
+        # Choose logger based on buffering preference
+        if buffer_logs:
+            logger = BufferedIndexingLogger(enabled=True)
+        else:
+            logger = IndexingLogger(enabled=True)
+
+        filters = {}
 
         # Use component-based filtering if available, fallback to symbol-based
         if cls.debug_options.language:
-            filters = {'language': [cls.debug_options.language]}
+            filters['language'] = [cls.debug_options.language]
 
-            if hasattr(cls.debug_options, 'component_names') and cls.debug_options.component_names:
-                # Component-based filtering (preferred)
-                # Merge auto-discovered components with additional components from command line
-                all_components = cls.debug_options.component_names[:]
-                if hasattr(cls.debug_options, 'additional_components') and cls.debug_options.additional_components:
-                    for comp in cls.debug_options.additional_components:
-                        if comp not in all_components:
-                            all_components.append(comp)
+        if hasattr(cls.debug_options, 'component_names') and cls.debug_options.component_names:
+            # Component-based filtering (preferred)
+            # Merge auto-discovered components with additional components from command line
+            all_components = cls.debug_options.component_names[:]
+            if hasattr(cls.debug_options, 'additional_components') and cls.debug_options.additional_components:
+                for comp in cls.debug_options.additional_components:
+                    if comp not in all_components:
+                        all_components.append(comp)
 
-                filters['component_names'] = all_components
-                debug_targets_str = ", ".join(all_components)
-                print(f"Using component-based filtering: {debug_targets_str}")
-            elif cls.debug_options.symbol_names:
-                # Symbol-based filtering (fallback)
-                filters['symbol_names'] = cls.debug_options.symbol_names
-                debug_targets_str = ", ".join(cls.debug_options.symbol_names)
-                print(f"Using symbol-based filtering: {debug_targets_str}")
+            filters['component_names'] = all_components
+            debug_targets_str = ", ".join(all_components)
+            print(f"Using component-based filtering: {debug_targets_str}")
+        elif cls.debug_options.symbol_names:
+            # Symbol-based filtering (fallback)
+            filters['symbol_names'] = cls.debug_options.symbol_names
+            debug_targets_str = ", ".join(cls.debug_options.symbol_names)
+            print(f"Using symbol-based filtering: {debug_targets_str}")
 
-            if len(filters) > 1:  # More than just language filter
+        if len(filters) > 1:  # More than just language filter
+            if buffer_logs:
+                logger = BufferedIndexingLogger(enabled=True, filters=filters)
+            else:
                 logger = IndexingLogger(enabled=True, filters=filters)
 
         # Enable strict resolution mode for tests to catch unresolved relationships (unless disabled)
@@ -151,6 +160,12 @@ class TestLanguageSupportSuite(unittest.TestCase):
             if e.handler_name:
                 print(f"   Handler: {e.handler_name}")
 
+            # Flush buffered debug messages to show what led to this exception
+            if hasattr(logger, 'flush_buffer'):
+                print(f"\nLAST 30 DEBUG LOG MESSAGES ({logger.get_buffer_size()} total):")
+                logger.flush_buffer(last_x=30)
+                print()
+
             # Dump unresolved relationships that are relevant to this exception
             if e.unresolved_relationships:
                 print(f"\n   📋 UNRESOLVED RELATIONSHIPS ({len(e.unresolved_relationships)} total):")
@@ -164,6 +179,11 @@ class TestLanguageSupportSuite(unittest.TestCase):
             # Re-raise the exception to fail the test
             raise
         except Exception as e:
+            # Flush buffered debug messages to show what led to this exception
+            if hasattr(logger, 'flush_buffer'):
+                print(f"\nnLAST 30 DEBUG LOG MESSAGES ({logger.get_buffer_size()} total):")
+                logger.flush_buffer(last_x=30)
+                print()
             # Re-raise any other exceptions as-is
             raise
 
@@ -218,10 +238,22 @@ class AutoDebugTestResult(unittest.TextTestResult):
                 TestLanguageSupportSuite.debug_options.symbol_names = None  # Clear old method
                 TestLanguageSupportSuite.debug_options.language = lang_name
                 TestLanguageSupportSuite.debug_options.component_names = components_to_debug
-                TestLanguageSupportSuite.rebuild_index()
+                TestLanguageSupportSuite.rebuild_index(buffer_logs=False)
             else:
-                print(f"\nAuto debug error: Could not determine components for auto-debugging test: {test.id()}")
-                print("Run tests again and manually specify --debug-components option.")
+                # Check if additional components were specified manually
+                if hasattr(TestLanguageSupportSuite.debug_options, 'additional_components') and TestLanguageSupportSuite.debug_options.additional_components:
+                    components_to_debug = TestLanguageSupportSuite.debug_options.additional_components[:]
+                    debug_components_str = ", ".join(components_to_debug)
+                    print(f"\n--- Auto-debugging failed test: {test.id()} ---")
+                    print(f"Using manually specified components: {debug_components_str} for language {lang_name} ---")
+            
+                    TestLanguageSupportSuite.debug_options.symbol_names = None  # Clear old method
+                    TestLanguageSupportSuite.debug_options.language = lang_name
+                    TestLanguageSupportSuite.debug_options.component_names = components_to_debug
+                    TestLanguageSupportSuite.rebuild_index(buffer_logs=False)
+                else:
+                    print(f"\nAuto debug error: Could not determine components for auto-debugging test: {test.id()}")
+                    print("Run tests again and manually specify --debug-components option.")
         else:
             print(f"\n--- Could not determine relationship data for auto-debugging test: {test.id()} ---")
             print("Run tests again and manually specify --debug-components option.")
@@ -350,10 +382,14 @@ def main():
     parser.add_argument(
         '--no-strict-resolution',
         action='store_true',
-        help="Disable strict resolution checks (allow remaining unresolved relationships after Phase 3)"
+        help="Disable strict resolution checks (allow remaining unresolved relationships after Phase 3). Enabling this option is automatically considered a test failure. For debugging only."
     )
 
     args, remaining_argv = parser.parse_known_args()
+
+    # When --debug-components is specified, implicitly enable --failfast
+    if args.debug_components:
+        args.failfast = True
 
     TestLanguageSupportSuite.auto_debug = args.auto_debug
     TestLanguageSupportSuite.fail_fast = args.failfast
@@ -369,7 +405,7 @@ def main():
 
     # Initialize database once at the start
     print("--- Initializing test database ---")
-    TestLanguageSupportSuite.rebuild_index()
+    TestLanguageSupportSuite.rebuild_index(buffer_logs=True)
 
     # Load passed tests from file once
     passed_tests_file = os.path.join(project_root, 'test', 'passed_tests.json')

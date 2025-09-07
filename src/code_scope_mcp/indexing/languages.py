@@ -144,3 +144,35 @@ class PhpLanguageDefinition(LanguageDefinition):
             "calls_class_method",
             "references_variable",
         ]
+
+
+class CLanguageDefinition(LanguageDefinition):
+    @property
+    def language_name(self) -> str:
+        return "c"
+
+    @property
+    def file_extensions(self) -> List[str]:
+        return [".c", ".h"]
+
+    @property
+    def supported_symbol_types(self) -> List[str]:
+        return [
+            "file",
+            "function",
+            "variable",
+            "struct",
+            "typedef",
+            "enum",
+        ]
+
+    @property
+    def supported_relationship_types(self) -> List[str]:
+        return [
+            "imports",
+            "calls_file_function",
+            "declares_file_function",
+            "references_variable",
+            "uses",
+            "type_of",
+        ]

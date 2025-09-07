@@ -185,6 +185,9 @@ class IndexWriter:
             self.db_connection.commit()
             self.logger.log("IndexWriter", f"add_symbol({symbol.qname})")
             return symbol
+        except sqlite3.IntegrityError as e1:
+            self.logger.mustLog("IndexWriter", f"Violates unique constraint: File: {symbol.file_path}, qname: {symbol.qname}, Line Nr: {symbol.line_number}")
+            raise
         finally:
             cursor.close()
 
@@ -227,6 +230,38 @@ class IndexWriter:
                 "INSERT INTO relationships (source_symbol_id, target_symbol_id, type_id, confidence) VALUES (?, ?, ?, ?)",
                 self._relationship_batch
             )
+        except sqlite3.IntegrityError as e1:
+            for rel in self._relationship_batch:
+                try:
+                    cursor.execute(
+                        "INSERT INTO relationships (source_symbol_id, target_symbol_id, type_id, confidence) VALUES (?, ?, ?, ?)",
+                        rel
+                    )
+                except sqlite3.IntegrityError as e2:
+                    # Log detailed information about the duplicate
+                    source_id, target_id, type_id, confidence = rel
+                    self.logger.mustLog("IndexWriter", f"DUPLICATE RELATIONSHIP: source_id={source_id}, target_id={target_id}, type_id={type_id}, error={e2}")
+                    #print(f"DUPLICATE RELATIONSHIP: source_id={source_id}, target_id={target_id}, type_id={type_id}, error={e2}")
+
+                    # Try to find existing relationship details
+                    cursor.execute("""
+                        SELECT rt.name as rel_type, s1.qname as source_qname, s2.qname as target_qname
+                        FROM relationships r
+                        JOIN relationship_types rt ON r.type_id = rt.id
+                        JOIN code_symbols s1 ON r.source_symbol_id = s1.id
+                        JOIN code_symbols s2 ON r.target_symbol_id = s2.id
+                        WHERE r.source_symbol_id = ? AND r.target_symbol_id = ? AND r.type_id = ?
+                    """, (source_id, target_id, type_id))
+
+                    existing = cursor.fetchone()
+                    if existing:
+                        rel_type, source_qname, target_qname = existing
+                        self.logger.mustLog("IndexWriter", f"EXISTING RELATIONSHIP: {source_qname} --({rel_type})--> {target_qname}")
+                        #print(f"EXISTING RELATIONSHIP: {source_qname} --({rel_type})--> {target_qname}")
+
+                    # Re-raise the error
+                    raise e2
+
             self.db_connection.commit()
             self.logger.log("IndexWriter", f"Executed batch of {len(self._relationship_batch)} relationships")
         finally:

@@ -706,6 +706,10 @@ class IndexingOrchestrator:
             summary_lines.append(f"📝 Detailed logs written to: {self.exception_log_file}")
 
         summary_lines.append(f"\n⚠️  Total exceptions: {total_exceptions} (indexing continued but may be incomplete)")
-        summary_lines.append("   Some code relationships may not have been indexed due to errors.")
+
+        error_message = "   Some code relationships may not have been indexed due to errors."
+        if self.exception_log_file:
+            error_message += f" See: {self.exception_log_file}"
+        summary_lines.append(error_message)
 
         return "\n".join(summary_lines)

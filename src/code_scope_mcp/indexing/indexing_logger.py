@@ -301,3 +301,73 @@ class IndexingLogger:
             print(f"  Min: {stats['min_time']:.4f}s")
             print(f"  Max: {stats['max_time']:.4f}s")
         print("="*60)
+
+
+class BufferedIndexingLogger(IndexingLogger):
+    """A logger that buffers messages and only outputs them when explicitly requested.
+
+    This is useful for test scenarios where you want to capture debug information
+    but only display it when exceptions occur, reducing noise in successful runs.
+    """
+
+    def __init__(self, enabled=True, filters=None):
+        super().__init__(enabled=enabled, filters=filters)
+        self.message_buffer = []
+
+    def log(self, component_name: str, message: str, **dump_vars):
+        """Log a message by buffering it."""
+        if not self.enabled:
+            return
+
+        formatted_message = self._format_message(component_name, message, dump_vars)
+        if self._should_log(component_name, formatted_message, self.current_context.get('language')):
+            self.message_buffer.append(formatted_message)
+
+    def mustLog(self, component_name, message, **dump_vars):
+        """Log a message always by buffering it."""
+        if not self.enabled:
+            return
+
+        full_context = {**dump_vars}
+        formatted_message = self._format_message(component_name, message, full_context)
+        self.message_buffer.append(formatted_message)
+
+    def mustLogForLang(self, component_name, message, **dump_vars):
+        """Log a message if language filter matches by buffering it."""
+        if not self.enabled:
+            return
+
+        full_context = {**dump_vars}
+
+        # Check language filter
+        if self.filters and self.current_context['language'] and 'language' in self.filters:
+            if self.current_context['language'] in self.filters['language']:
+                formatted_message = self._format_message(component_name, message, full_context)
+                self.message_buffer.append(formatted_message)
+            else:
+                return
+
+    def flush_buffer(self, last_x: Optional[int] = None):
+        """Output buffered messages and clear the buffer.
+
+        Args:
+            last_x: If provided, print only the last x messages before clearing the buffer.
+        """
+        if last_x is not None and last_x > 0:
+            messages_to_flush = self.message_buffer[-last_x:]
+            for message in messages_to_flush:
+                print(message)
+        else:
+            # Flush all
+            for message in self.message_buffer:
+                print(message)
+
+        self.message_buffer.clear()
+
+    def clear_buffer(self):
+        """Clear the buffer without outputting messages."""
+        self.message_buffer.clear()
+
+    def get_buffer_size(self) -> int:
+        """Get the number of messages currently in the buffer."""
+        return len(self.message_buffer)
