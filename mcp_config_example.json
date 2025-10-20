@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+     "mcpServers": {
+       "code-scope": {
+         "command": "uvx",
+         "args": ["code-scope-mcp"]
+       }
+     }
+   }
+}

@@ -193,7 +193,7 @@ class DatabaseService:
             ("idx_code_symbols_file_id", "CREATE INDEX IF NOT EXISTS idx_code_symbols_file_id ON code_symbols(file_id);"),
             ("idx_relationships_source", "CREATE INDEX IF NOT EXISTS idx_relationships_source ON relationships(source_symbol_id);"),
             ("idx_relationships_target", "CREATE INDEX IF NOT EXISTS idx_relationships_target ON relationships(target_symbol_id);"),
-            ("idx_unresolved_lookup", "CREATE INDEX idx_unresolved_lookup ON unresolved_relationships(source_symbol_id, relationship_type_id, target_name, target_qname);"),
+            ("idx_unresolved_lookup", "CREATE INDEX IF NOT EXISTS idx_unresolved_lookup ON unresolved_relationships(source_symbol_id, relationship_type_id, target_name, target_qname);"),
             # Incremental indexing indexes
             ("idx_code_symbols_last_touched", "CREATE INDEX IF NOT EXISTS idx_code_symbols_last_touched ON code_symbols(last_touched);"),
             ("idx_relationships_last_touched", "CREATE INDEX IF NOT EXISTS idx_relationships_last_touched ON relationships(last_touched);"),
@@ -414,7 +414,7 @@ class DatabaseService:
                 FOREIGN KEY (source_symbol_id) REFERENCES code_symbols (id) ON DELETE CASCADE
             );
             """,
-            "CREATE INDEX idx_unresolved_lookup ON unresolved_relationships(source_symbol_id, relationship_type_id, target_name, target_qname);"
+            "CREATE INDEX IF NOT EXISTS idx_unresolved_lookup ON unresolved_relationships(source_symbol_id, relationship_type_id, target_name, target_qname);"
         ]
 
         for statement in ddl_statements:

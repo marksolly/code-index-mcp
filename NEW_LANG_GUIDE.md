@@ -374,6 +374,8 @@ The orchestrator automatically discovers language-specific handlers from the `{l
 
 **Confidence Scoring**: The `IndexWriter.add_relationship` method supports a `confidence` parameter (a float between 0.0 and 1.0). This is useful for handling ambiguity. If a handler cannot uniquely identify a target symbol, it can create multiple low-confidence relationships. For example, if there are three possible target symbols, the handler could create three relationships, each with a confidence of `1/3`. This is a key part of the indexer's "fail-soft" philosophy.
 
+confidence = 1 / num_candidates
+
 ## Debugging
 
 -   **To run the entire suite for all languages:**
@@ -501,6 +503,33 @@ Read Only:
    - writer.py (IndexWriter)
 
 If you think you need to modify these files, reassess your plan carefully and gather more context, you have missed something.
+
+### Test & Debugging
+
+#### Good Debug Commands
+
+Examples of high quality, effective test & debugging commands:
+
+ > uv run python test/test_language_support_suite.py --help
+ > uv run python test/test_language_support_suite.py
+ > uv run python test/test_language_support_suite.py --language=c --debug-components="BaseImportHandler,CFunctionExtractor,CImportHandler" --failfast
+ > sqlite "SELECT FROM ... JOIN ... WHERE;"
+ > uv run python cli.py query --help
+ > uv run python cli.py query --db-path='test_code_index.db' ...
+
+#### Bad Debugging Commands
+
+Banned. Not allowed. Off limits. Undesirable. Awful. Terrible.
+Prohibido, No permitido, Acceso restringido, Indeseable.
+Interdit, Non autorisé, Accès interdit, Indésirable.
+Verboten, Nicht erlaubt, Zutritt verboten, Unerwünscht, Schrecklich, Furchtbar.
+被禁止的, 不允许, 禁止入内, 不受欢迎的, 糟糕的, 可怕的
+
+ > python -c "..."
+ > python test/test_language_support_suite.py
+ > uv run python test/test_language_support_suite.py | tail -20
+ > uv run python test/test_language_support_suite.py | grep ...
+ > uv run python test/test_language_support_suite.py | head -10
 
 ### Planning
 Before working on a new language, LLMs & agents should insist on creating a detailed implementation plan containing a checklist with checkboxes. They should keep that checklist updated with their progress.
