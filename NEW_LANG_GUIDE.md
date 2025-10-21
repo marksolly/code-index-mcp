@@ -37,7 +37,7 @@ A qname allows for the formation of probabilistic relationships because it is co
 A qualified name must only have two parts. The separator (`:` or `.`) depends on enclosing scope type. Use `.` for object-oriented contexts (class methods) and `:` for file-level contexts (functions in a file).
 
 ```
-QNAME_VALIDATION_REGEX = re.compile(r"^[a-zA-Z0-9_\-\.\/]+(:|\.|:__FILE__)[a-zA-Z0-9_\-]*$")
+QNAME_VALIDATION_REGEX = re.compile(r"^[a-zA-Z0-9_\-\.\[\]]+(:|\.|:__FILE__)[a-zA-Z0-9_\-\[\]]*$")
 ```
 
 ### Examples of Correctly Formed Qnames:
