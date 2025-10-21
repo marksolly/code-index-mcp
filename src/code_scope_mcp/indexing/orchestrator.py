@@ -382,11 +382,22 @@ class IndexingOrchestrator:
 
         for handler_class in sorted_handlers.values():
             self.logger.log("Orchestrator", f"P2 Resolving: {handler_class.__name__}")
-            _, language_obj = self._get_parser_and_language(language)
-            handler = handler_class(language, language_obj, self.logger)
-            # Use batching per handler. Some handlers depend on previous handlers in the pipeline.
-            with writer.batch_relationships() as batch_writer:
-                handler.resolve_immediate(batch_writer, reader)
+            try:
+                _, language_obj = self._get_parser_and_language(language)
+                handler = handler_class(language, language_obj, self.logger)
+                # Use batching per handler. Some handlers depend on previous handlers in the pipeline.
+                with writer.batch_relationships() as batch_writer:
+                    handler.resolve_immediate(batch_writer, reader)
+            except Exception as e:
+                # Log the error but continue with other handlers
+                context = {
+                    'handler': handler_class.__name__,
+                    'language': language,
+                    'phase': 'Phase 2'
+                }
+                self._handle_exception("Phase 2 Handler", e, context)
+                # Ensure batch state is reset after handler failure
+                writer.reset_batch_state()
 
     def run_phase_3_final_resolution(self, writer: IndexWriter, reader: IndexReader, language: str):
         """Phase 3: Complex multi-step relationship resolution"""
@@ -399,15 +410,26 @@ class IndexingOrchestrator:
 
         for handler_class in sorted_handlers.values():
             self.logger.log("Orchestrator", f"P3 Resolving: {handler_class.__name__}")
-            _, language_obj = self._get_parser_and_language(language)
-            handler = handler_class(language, language_obj, self.logger)
-            # Use batching per handler. Some handlers depend on previous handlers in the pipeline.
-            with writer.batch_relationships() as batch_writer:
-                handler.resolve_complex(batch_writer, reader)
+            try:
+                _, language_obj = self._get_parser_and_language(language)
+                handler = handler_class(language, language_obj, self.logger)
+                # Use batching per handler. Some handlers depend on previous handlers in the pipeline.
+                with writer.batch_relationships() as batch_writer:
+                    handler.resolve_complex(batch_writer, reader)
 
-            # Strict validation: Check if this handler left any unresolved relationships
-            if self.strict_resolution:
-                self.strict_validator.validate_after_handler(handler_class, self.catch_exceptions)
+                # Strict validation: Check if this handler left any unresolved relationships
+                if self.strict_resolution:
+                    self.strict_validator.validate_after_handler(handler_class, self.catch_exceptions)
+            except Exception as e:
+                # Log the error but continue with other handlers
+                context = {
+                    'handler': handler_class.__name__,
+                    'language': language,
+                    'phase': 'Phase 3'
+                }
+                self._handle_exception("Phase 3 Handler", e, context)
+                # Ensure batch state is reset after handler failure
+                writer.reset_batch_state()
 
         self.logger.mustLogForLang("Orchestrator", f"Phase 3: Final Resolution completed for {language}")
 

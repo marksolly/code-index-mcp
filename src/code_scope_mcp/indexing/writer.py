@@ -16,7 +16,7 @@ class IndexWriter:
     Abstracts all database write operations, providing a clean API for analyzers.
     This version performs atomic database operations without batching.
     """
-    QNAME_VALIDATION_REGEX = re.compile(r"^[a-zA-Z0-9_\-\.\/]+(:|\.|:__FILE__)[a-zA-Z0-9_\-]*$")
+    QNAME_VALIDATION_REGEX = re.compile(r"^[a-zA-Z0-9_\-\.\[\]]+(:|\.|:__FILE__)[a-zA-Z0-9_\-\[\]]*$")
 
     def __init__(self, db_connection: sqlite3.Connection, logger):
         self.db_connection = db_connection
@@ -31,6 +31,12 @@ class IndexWriter:
         self._relationship_batch: List[Tuple[int, int, int, float]] = []
 
         self._load_type_ids()
+
+    def reset_batch_state(self):
+        """Reset batch relationship state to ensure clean operation."""
+        self._relationship_batch_mode = False
+        self._relationship_batch = []
+        self.logger.log("IndexWriter", "Batch state reset")
 
     def set_language_definition(self, language_definition: LanguageDefinition):
         """Sets the language definition for the writer."""
@@ -214,10 +220,19 @@ class IndexWriter:
             yield self
         finally:
             # Execute batch and exit batch mode
-            if self._relationship_batch:
-                self._execute_relationship_batch()
-            self._relationship_batch_mode = False
-            self._relationship_batch = []
+            try:
+                if self._relationship_batch:
+                    self._execute_relationship_batch()
+                self.logger.log("IndexWriter", f"Executed batch of {len(self._relationship_batch) if self._relationship_batch else 0} relationships")
+            except Exception as e:
+                # For production resilience, log the error and fall back to individual inserts if batch fails
+                self.logger.log("IndexWriter", f"Batch execution failed, falling back to individual inserts: {e}")
+                if self._relationship_batch:
+                    self._execute_relationship_batch_fallback()
+            finally:
+                # Always reset state regardless of success/failure
+                self._relationship_batch_mode = False
+                self._relationship_batch = []
 
     def _execute_relationship_batch(self):
         """Execute all batched relationship operations in a single transaction."""
@@ -264,6 +279,33 @@ class IndexWriter:
 
             self.db_connection.commit()
             self.logger.log("IndexWriter", f"Executed batch of {len(self._relationship_batch)} relationships")
+        finally:
+            cursor.close()
+            self._relationship_batch = []
+
+    def _execute_relationship_batch_fallback(self):
+        """Execute batched relationship operations individually when batch execution fails."""
+        if not self._relationship_batch:
+            return
+
+        cursor = self.db_connection.cursor()
+        successful_inserts = 0
+        try:
+            for rel in self._relationship_batch:
+                try:
+                    cursor.execute(
+                        "INSERT INTO relationships (source_symbol_id, target_symbol_id, type_id, confidence) VALUES (?, ?, ?, ?)",
+                        rel
+                    )
+                    successful_inserts += 1
+                except sqlite3.IntegrityError as e:
+                    # Log the duplicate but continue with others
+                    source_id, target_id, type_id, confidence = rel
+                    self.logger.log("IndexWriter", f"Skipped duplicate relationship in fallback: source_id={source_id}, target_id={target_id}, type_id={type_id}")
+
+            if successful_inserts > 0:
+                self.db_connection.commit()
+                self.logger.log("IndexWriter", f"Fallback inserted {successful_inserts} individual relationships")
         finally:
             cursor.close()
             self._relationship_batch = []

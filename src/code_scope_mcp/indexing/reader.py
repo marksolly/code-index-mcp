@@ -18,7 +18,7 @@ class IndexReader:
     """
 
     # Filter allows for wildcard characters. Some method can use LIKE matches.
-    QNAME_VALIDATION_REGEX = re.compile(r"^[a-zA-Z0-9_\-\.\/\*\%]+(:|\.|\*|\%|:__FILE__)[a-zA-Z0-9_\-\*\%]*$")
+    QNAME_VALIDATION_REGEX = re.compile(r"^[a-zA-Z0-9_\-\.\[\]]+(:|\.|:__FILE__)[a-zA-Z0-9_\-\[\]]*$")
 
     def __init__(self, db_connection: sqlite3.Connection, logger: IndexingLogger):
         self.db_connection = db_connection
