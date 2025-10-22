@@ -9,6 +9,7 @@ from datetime import datetime
 from .models import Symbol
 from .languages import LanguageDefinition
 from .timing_utils import profile_db_operation
+from .exceptions import DuplicateRelationshipException, DuplicateSymbolException
 
 
 class IndexWriter:
@@ -193,7 +194,20 @@ class IndexWriter:
             return symbol
         except sqlite3.IntegrityError as e1:
             self.logger.mustLog("IndexWriter", f"Violates unique constraint: File: {symbol.file_path}, qname: {symbol.qname}, Line Nr: {symbol.line_number}")
-            raise
+
+            # Raise custom exception with attempted symbol details
+            attempted_symbol = {
+                'name': symbol.name,
+                'symbol_type': symbol.symbol_type,
+                'line_number': symbol.line_number
+            }
+
+            raise DuplicateSymbolException(
+                file_id=symbol.file_id,
+                qname=symbol.qname,
+                attempted_symbol=attempted_symbol,
+                file_path=symbol.file_path
+            )
         finally:
             cursor.close()
 
@@ -256,7 +270,6 @@ class IndexWriter:
                     # Log detailed information about the duplicate
                     source_id, target_id, type_id, confidence = rel
                     self.logger.mustLog("IndexWriter", f"DUPLICATE RELATIONSHIP: source_id={source_id}, target_id={target_id}, type_id={type_id}, error={e2}")
-                    #print(f"DUPLICATE RELATIONSHIP: source_id={source_id}, target_id={target_id}, type_id={type_id}, error={e2}")
 
                     # Try to find existing relationship details
                     cursor.execute("""
@@ -269,13 +282,19 @@ class IndexWriter:
                     """, (source_id, target_id, type_id))
 
                     existing = cursor.fetchone()
+                    existing_rel_details = None
                     if existing:
                         rel_type, source_qname, target_qname = existing
+                        existing_rel_details = (rel_type, source_qname, target_qname)
                         self.logger.mustLog("IndexWriter", f"EXISTING RELATIONSHIP: {source_qname} --({rel_type})--> {target_qname}")
-                        #print(f"EXISTING RELATIONSHIP: {source_qname} --({rel_type})--> {target_qname}")
 
-                    # Re-raise the error
-                    raise e2
+                    # Raise custom exception with details
+                    raise DuplicateRelationshipException(
+                        source_id=source_id,
+                        target_id=target_id,
+                        type_id=type_id,
+                        existing_rel_details=existing_rel_details
+                    )
 
             self.db_connection.commit()
             self.logger.log("IndexWriter", f"Executed batch of {len(self._relationship_batch)} relationships")
