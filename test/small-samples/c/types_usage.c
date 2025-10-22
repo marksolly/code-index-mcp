@@ -3,7 +3,7 @@
  * Demonstrates actual usage of typedefs, structs, and enums
  */
 
-#include "types.h"
+#include "../shlib/types.h"
 #include <stdio.h>
 
 // Global variables using our types

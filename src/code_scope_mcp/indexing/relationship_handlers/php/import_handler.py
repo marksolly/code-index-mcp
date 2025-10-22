@@ -77,9 +77,10 @@ class PhpImportHandler(BaseImportHandler):
         # PHP includes can be relative or absolute
         # For our test cases, we'll assume relative paths from the same directory
         if module_name.startswith('./'):
-            return module_name[2:]  # Remove leading ./
+            # Extract only the filename part to maintain qname format
+            return module_name[2:].split('/')[-1]
         elif module_name.startswith('../'):
-            # For simplicity, handle one level up
-            return module_name[3:]
+            # For simplicity, handle one level up and extract filename
+            return module_name[3:].split('/')[-1]
         else:
             return module_name

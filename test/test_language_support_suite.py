@@ -132,7 +132,7 @@ class TestLanguageSupportSuite(unittest.TestCase):
         # Enable strict resolution mode for tests to catch unresolved relationships (unless disabled)
         strict_mode = True if not hasattr(cls, 'no_strict_resolution') else not cls.no_strict_resolution
         orchestrator = IndexingOrchestrator(db_service=cls.db_service, logger=logger,
-                                          strict_resolution=strict_mode, catch_exceptions=False)
+                                          strict_resolution=strict_mode, catch_exceptions=True)
 
         if not strict_mode:
             print("⚠️  STRICT RESOLUTION MODE DISABLED - unresolved relationships will be ignored")
@@ -186,6 +186,12 @@ class TestLanguageSupportSuite(unittest.TestCase):
                 print()
             # Re-raise any other exceptions as-is
             raise
+
+        # Check for exceptions that were caught during indexing and list them
+        if orchestrator.exceptions:
+            summary = orchestrator._generate_exception_summary()
+            print(summary)
+            raise Exception("Indexing failed due to exceptions - see summary above")
 
         cls.verifier = RelationshipVerifier(cls.db_service)
 

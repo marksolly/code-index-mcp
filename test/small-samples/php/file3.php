@@ -1,6 +1,6 @@
 <?php
 
-require_once 'file2.php';
+require_once './dir2/file2.php';
 
 class Garage {
     public $name;

@@ -37,8 +37,8 @@ class JavascriptTestDefinition(BaseTestDefinition):
 
     def get_sample_files(self) -> List[str]:
         return [
-            "test/small-samples/javascript/file1.js",
-            "test/small-samples/javascript/file2.js",
+            "test/small-samples/javascript/dir1/file1.js",
+            "test/small-samples/javascript/dir2/file2.js",
             "test/small-samples/javascript/file3.js",
         ]
 

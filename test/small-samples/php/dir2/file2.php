@@ -1,6 +1,6 @@
 <?php
 
-require_once 'file1.php';
+require_once '../dir1/file1.php';
 
 class Engine {
     public $type;

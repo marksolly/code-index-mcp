@@ -17,8 +17,9 @@ class IndexReader:
     Abstracts database read operations with generalized search interfaces.
     """
 
-    # Filter allows for wildcard characters. Some method can use LIKE matches.
+    # Filter allows for % _ wildcard characters. Some method can use LIKE matches.
     QNAME_VALIDATION_REGEX = re.compile(r"^[a-zA-Z0-9_\-\.\[\]]+(:|\.|:__FILE__)[a-zA-Z0-9_\-\[\]]*$")
+    QNAME_LIKE_VALIDATION_REGEX = re.compile(r"^[a-zA-Z0-9_%\-\.\[\]]+(:|\.|:__FILE__)[a-zA-Z0-9_%\-\[\]]*$")
 
     def __init__(self, db_connection: sqlite3.Connection, logger: IndexingLogger):
         self.db_connection = db_connection
@@ -54,12 +55,15 @@ class IndexReader:
 """
         raise DatabaseIntegrityError(error_msg)
 
-    def _validate_qname(self, qname: str, context: str):
-        # Allow file qnames, which don't have a separator
+    def _validate_qname(self, qname: str, context: str, match_type: str = "exact"):
+        # Allow __FILE__ qnames, which don't have a separator
         if ":" not in qname and "." not in qname:
             return
 
-        if not self.QNAME_VALIDATION_REGEX.match(qname):
+        # Choose regex based on match type - LIKE queries can include SQLite wildcards
+        regex = self.QNAME_LIKE_VALIDATION_REGEX if match_type == "like" else self.QNAME_VALIDATION_REGEX
+
+        if not regex.match(qname):
             raise ValueError(f"IndexReader: Invalid qname format in {context}: '{qname}'");
 
     @profile_db_operation()
@@ -102,7 +106,7 @@ class IndexReader:
             conditions.append(f"cs.name {operator} ?")
             params.append(name)
         if qname:
-            self._validate_qname(qname, "find_symbols")
+            self._validate_qname(qname, "find_symbols", match_type)
             conditions.append(f"cs.qname {operator} ?")
             params.append(qname)
         if language:
@@ -167,11 +171,11 @@ class IndexReader:
             conditions.append("r.target_symbol_id = ?")
             params.append(target_id)
         if source_qname:
-            self._validate_qname(source_qname, "find_relationships source")
+            self._validate_qname(source_qname, "find_relationships source", "exact")
             conditions.append("cs_source.qname = ?")
             params.append(source_qname)
         if target_qname:
-            self._validate_qname(target_qname, "find_relationships target")
+            self._validate_qname(target_qname, "find_relationships target", "exact")
             conditions.append("cs_target.qname = ?")
             params.append(target_qname)
         if source_language:

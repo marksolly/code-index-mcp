@@ -38,8 +38,8 @@ class PhpTestDefinition(BaseTestDefinition):
 
     def get_sample_files(self) -> List[str]:
         return [
-            "test/small-samples/php/file1.php",
-            "test/small-samples/php/file2.php",
+            "test/small-samples/php/dir1/file1.php",
+            "test/small-samples/php/dir2/file2.php",
             "test/small-samples/php/file3.php",
         ]
 

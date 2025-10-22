@@ -3,7 +3,7 @@
  * Demonstrates include relationships and function calls
  */
 
-#include "utils.h"
+#include "../shlib/utils.h"
 #include <stdio.h>
 
 // Global variable with external linkage

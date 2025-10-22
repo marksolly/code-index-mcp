@@ -1,4 +1,4 @@
-import { MY_CONSTANT, Vehicle, helper_function, vehiclePolisher, test_caller } from './file1.js';
+import { MY_CONSTANT, Vehicle, helper_function, vehiclePolisher, test_caller } from '../dir1/file1.js';
 
 const MAX_VEHICLE_SPEED = 200; // km/h - vehicle performance constant
 

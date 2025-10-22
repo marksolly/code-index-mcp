@@ -79,6 +79,8 @@ class JavascriptImportHandler(BaseImportHandler):
             target_file = module_name
             if target_file.startswith('./'):
                 target_file = target_file[2:]
+            # Extract only the filename part to maintain qname format
+            target_file = target_file.split('/')[-1]
             if not target_file.endswith('.js'):
                 target_file += '.js'
             return target_file

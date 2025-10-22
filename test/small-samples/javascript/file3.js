@@ -1,4 +1,4 @@
-import { Car } from './file2.js';
+import { Car } from './dir2/file2.js';
 
 class Garage {
     constructor(name) {

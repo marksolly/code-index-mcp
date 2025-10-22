@@ -74,7 +74,9 @@ class CImportHandler(BaseImportHandler):
         """
         # Remove quotes for local includes
         if module_name.startswith('"') and module_name.endswith('"'):
-            return module_name[1:-1]
+            # Extract only the filename part to maintain qname format
+            path = module_name[1:-1]
+            return path.split('/')[-1]
         else:
             # Already clean path
             return module_name

@@ -45,10 +45,10 @@ class CTestDefinition(BaseTestDefinition):
         """
         return [
             "test/small-samples/c/main.c",
-            "test/small-samples/c/utils.h",
-            "test/small-samples/c/types.h",
-            "test/small-samples/c/windows_platform.h",
-            "test/small-samples/c/linux_platform.h",
+            "test/small-samples/c/shlib/utils.h",
+            "test/small-samples/c/shlib/types.h",
+            "test/small-samples/c/platform/windows_platform.h",
+            "test/small-samples/c/platform/linux_platform.h",
             "test/small-samples/c/types_usage.c",
         ]
 
