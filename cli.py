@@ -117,7 +117,13 @@ def cmd_index(args):
     db_service.delete_db()  # Start fresh
     db_service.initialize_db()
 
-    # Setup ignore handler
+    # Check for base directory .indexerignore file and warn if missing
+    base_ignore_path = Path(target_dir) / ".indexerignore"
+    if not base_ignore_path.exists():
+        print("Warning: No .indexerignore file found in base directory. Using default ignore rules.", file=sys.stderr)
+        print("Create an .indexerignore file to override default exclusions. See README for details.", file=sys.stderr)
+
+    # Setup ignore handler, required by scan_directory()
     ignore_handler = IgnoreHandler()
 
     # Scan directory
@@ -226,8 +232,6 @@ def cmd_update(args):
     }
     logger = IndexingLogger(enabled=True, filters=logger_filters)
 
-
-
     # Enable exception catching for production robustness
     exception_log_file = str(db_path) + ".update.exceptions.log"
     orchestrator = IndexingOrchestrator(
@@ -325,6 +329,8 @@ USAGE NOTES:
   - Use --symbol-type multiple times to search multiple types
   - --symbol-type also supports comma-separated values: --symbol-type "class,function"
   - Pattern "*" matches all symbols of the specified type(s)
+  - File paths use glob patterns (e.g., "src/**" matches all files in src/)
+  - Language filter uses exact matches (e.g., "python", "javascript")
   - File paths use glob patterns (e.g., "src/**" matches all files in src/)
   - Language filter uses exact matches (e.g., "python", "javascript")
         """

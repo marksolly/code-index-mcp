@@ -23,11 +23,13 @@ from .exceptions import StrictModeViolationException
 
 
 class IndexingOrchestrator:
-    def __init__(self, db_service=None, logger: Optional[IndexingLogger] = None,
+    def __init__(self, db_service, logger: Optional[IndexingLogger] = None,
                  catch_exceptions: bool = False, exception_log_file: Optional[str] = None,
-                 strict_resolution: bool = False, incremental_mode: bool = False):
+                 strict_resolution: bool = False, incremental_mode: bool = False,
+                 ignore_handler: Optional[IgnoreHandler] = None):
         self.logger = logger or IndexingLogger(enabled=False)
-        self.ignore_handler = IgnoreHandler()
+        # Use injected ignore_handler or create default one
+        self.ignore_handler = ignore_handler or IgnoreHandler()
         self.symbol_extractor_classes: Dict[str, Type[BaseSymbolExtractor]] = {}
         self.language_definitions: Dict[str, LanguageDefinition] = self._discover_language_definitions()
 

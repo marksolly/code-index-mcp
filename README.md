@@ -359,7 +359,68 @@ Set the code-scope project path to /Users/dev/my-react-app and generate a log fi
 
 *Automatically indexes your codebase and creates searchable cache while generating an .indexer.log file for you to verify*
 
-- **🚫 `.indexerignore` Support**: Create this file in your project root to exclude files and directories from indexing and search using gitignore-style patterns.
+## File Filtering & .indexerignore
+
+Code Scope MCP includes **built-in default ignore rules** that automatically exclude common unwanted files and directories:
+
+### Default Ignore Patterns
+The following patterns are filtered by default during both **index** and **update** operations:
+- Build artifacts: `dist/`, `build/`, `target/`, `out/`
+- Dependencies: `node_modules/`, `venv/`, `env/`, `packages/`
+- Python bytecode: `__pycache__/`, `*.pyc`, `*.pyo`
+- IDE files: `.vscode/`, `.idea/`, `*~`
+- Logs and temp files: `*.log`, `logs/`, `*.tmp`
+- And many more...
+
+### Custom .indexerignore Files
+
+You can override or extend these defaults with `.indexerignore` files. **Custom ignore files take precedence over defaults**, but defaults still apply to files not explicitly covered by `.indexerignore` rules. Create an empty `.indexerignore` file if you want to disable defaults completely.
+
+**Placement**: `.indexerignore` files work like `.gitignore` - they affect the directory they are placed in and all subdirectories.
+
+**Pattern Support**: Gitignore-style patterns including:
+- `pattern/` - Ignore entire directories
+- `*.ext` - Ignore files by extension
+- `!important.txt` - Include previously ignored files
+- `# comments` - Comments are supported
+
+**⚖️ Precedence Rules**:
+1. **Custom .indexerignore files always take precedence** over defaults
+2. Parent directory ignore files are checked if no local ignore file exists
+3. If no `.indexerignore` files apply to a file path, **default rules are applied**
+4. Defaults attempt to prevent accidental over-indexing but may not suit your project.
+
+### Examples
+
+**Example 1: Override defaults for documentation**
+```bash
+# .indexerignore in project root
+# Include documentation that defaults would normally exclude
+!docs/
+!README.md
+```
+
+**Example 2: Additional project-specific exclusions**
+```bash
+# .indexerignore in project root
+/cache/
+/build/
+/*.test.js
+```
+
+**Example 3: Directory-specific ignores**
+```bash
+# .indexerignore in src/ directory
+/utils/temp/
+/**/debug.*
+```
+
+### Behavior Notes
+
+- **Index operations**: If no `.indexerignore` exists in the base directory, a warning is shown and defaults are used
+- **Update operations**: Uses the same ignore logic as index operations for consistency
+- **Performance**: Previously discovered `.indexerignore` files are cached for faster subsequent operations
+- **No persistence**: Only file paths (not contents) are cached - `.indexerignore` files are always read fresh
 
 ## MCP Tool Usage Examples
 
