@@ -497,10 +497,10 @@ class IndexingOrchestrator:
     def _sort_handlers_by_dependencies(self, handlers: Dict[str, Type[BaseRelationshipHandler]]) -> Dict[str, Type[BaseRelationshipHandler]]:
         """Sort handlers so dependencies are resolved first."""
         # Simple topological sort based on phase_dependencies
-        print("Starting dependency sort for handlers:")
+        #print("Starting dependency sort for handlers:")
         for rel_type, handler_class in handlers.items():
             deps = getattr(handler_class, 'phase_dependencies', [])
-            print(f"  {rel_type}: {deps}")
+            #print(f"  {rel_type}: {deps}")
 
         sorted_handlers = {}
         remaining = dict(handlers)
@@ -531,21 +531,21 @@ class IndexingOrchestrator:
                     self.logger.mustLog("Orchestrator", f"  Have these handlers been created?")
                     raise ValueError(f"Missing dependency handlers: {sorted(missing_deps)}")
                 else:
-                    print("Circular dependency detected!")
-                    print("Remaining handlers and their unresolved dependencies:")
+                    self.logger.mustLog("Orchestrator", "Circular dependency detected!")
+                    self.logger.mustLog("Orchestrator", "Remaining handlers and their unresolved dependencies:")
                     for rel_type, handler_class in remaining.items():
                         deps = getattr(handler_class, 'phase_dependencies', [])
                         unresolved = [dep for dep in deps if dep not in sorted_handlers]
-                        print(f"  {rel_type}: missing dependencies {unresolved}")
+                        self.logger.mustLog("Orchestrator", f"  {rel_type}: missing dependencies {unresolved}")
                     raise ValueError(f"Circular dependency detected in handlers: {list(remaining.keys())}")
 
-            print(f"Adding to sorted (no unresolved dependencies): {list(ready_handlers.keys())}")
+            #print(f"Adding to sorted (no unresolved dependencies): {list(ready_handlers.keys())}")
             # Add ready handlers to sorted list
             sorted_handlers.update(ready_handlers)
             for rel_type in ready_handlers:
                 del remaining[rel_type]
 
-        print(f"Final sorted order: {list(sorted_handlers.keys())}")
+        #print(f"Final sorted order: {list(sorted_handlers.keys())}")
         return sorted_handlers
 
     def _build_extension_map(self) -> Dict[str, str]:
