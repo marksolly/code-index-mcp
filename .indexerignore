@@ -1,0 +1,13 @@
+.*/
+node_modules/
+venv/
+test/sample-projects/
+test/small-samples/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+dist/
+*.egg-info/
+.installed.cfg
+*.egg
