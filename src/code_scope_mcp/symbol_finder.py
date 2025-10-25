@@ -73,6 +73,8 @@ class SymbolFinder:
         if include_context is None:
             include_context = ['all']
 
+        has_wildcards = '*' in pattern or '?' in pattern
+
         # Ensure database connection
         if not self.db_service.conn:
             self.db_service.connect()
@@ -96,19 +98,7 @@ class SymbolFinder:
             if match_mode == 'glob':
                 # Convert glob-style wildcards to SQL LIKE wildcards
                 like_pattern = pattern.replace('*', '%').replace('?', '_')
-                # The `COLLATE NOCASE` on the `name` column handles case-insensitivity automatically
-                # for `LIKE` operations, so we don't need `LOWER()`.
-                # We only need to add a pragma for case-sensitive matching.
-                if case_sensitive:
-                    # This is a temporary pragma for this query
-                    conn.execute("PRAGMA case_sensitive_like = ON;")
-
                 base_query += " AND cs.name LIKE ?"
-                params.append(like_pattern)
-
-                if case_sensitive:
-                    # It's good practice to turn it off after the query
-                    conn.execute("PRAGMA case_sensitive_like = OFF;")
             else:
                 raise ValueError(f"Invalid match_mode: {match_mode}. Must be 'glob'.")
 
@@ -122,6 +112,9 @@ class SymbolFinder:
 
             # Add path pattern filter
             if path_pattern:
+                # Auto-add leading wildcard for directory-style patterns
+                if not path_pattern.startswith(('*', '/', '\\')):
+                    path_pattern = '*' + path_pattern
                 # Convert glob-style wildcards to SQL LIKE wildcards for consistency
                 path_like_pattern = path_pattern.replace('*', '%').replace('?', '_')
                 base_query += " AND f.path LIKE ?"
@@ -136,9 +129,22 @@ class SymbolFinder:
             base_query += " LIMIT ?"
             params.append(limit + 1)
 
+            if case_sensitive:
+                conn.execute("PRAGMA case_sensitive_like = ON;")
+            
+            # Perform search
             cursor = conn.cursor()
+            params.insert(-1, like_pattern)
             cursor.execute(base_query, params)
+            fallback = False
             symbols_data = cursor.fetchall()
+            if not symbols_data and not has_wildcards:
+                if case_sensitive:
+                    conn.execute("PRAGMA case_sensitive_like = OFF;")
+                params[-2] = '%' + like_pattern + '%'
+                cursor.execute(base_query, params)
+                symbols_data = cursor.fetchall()
+                fallback = bool(symbols_data)
 
             if not symbols_data:
                 return "No symbols found matching your criteria."
@@ -226,6 +232,10 @@ class SymbolFinder:
                     properties_map[row['symbol_id']][row['key']] = row['value']
 
             # Format output
+            if fallback:
+                output_lines.append("No exact matches found")
+                output_lines.append("")
+
             for row in symbols_data:
                 symbol_id = row['id']
                 symbol_name = row['name']
@@ -317,7 +327,7 @@ class SymbolFinder:
 
         # Add warning at the end if limit was exceeded
         if limit_exceeded:
-            output_lines.append(f"Warning: Output truncated to first {limit} results.")
+            output_lines.append(f"Displaying first {limit} of X total results. Try again, don't give up: Refine with symbol_type filters, path_pattern, or language for focused search; increase limit parameter for more results.")
 
         return "\n".join(output_lines).strip()
 
