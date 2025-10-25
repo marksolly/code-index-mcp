@@ -55,7 +55,7 @@ class JavascriptClassExtractor:
                         target_qname=class_qname,
                     )
 
-                    # Extract methods inside the class
+                    # Extract methods and properties inside the class
                     self._extract_class_methods(node, class_symbol, context, symbols)
 
                     # Extract inheritance
@@ -64,7 +64,7 @@ class JavascriptClassExtractor:
         return symbols
 
     def _extract_class_methods(self, class_node, class_symbol, context: SymbolExtractionContext, symbols):
-        """Extract methods from within a class definition"""
+        """Extract methods and properties from within a class definition"""
         from tree_sitter import Query
 
         # Query for method_definition inside the class
@@ -74,6 +74,10 @@ class JavascriptClassExtractor:
 
         query = context.language_obj.query(method_query)
         captures = query.captures(class_node)
+
+        # Track property names to avoid duplicates (getters/setters create one property)
+        property_names = set()
+        regular_methods = []
 
         for capture in captures:
             node = capture[0]
@@ -85,28 +89,64 @@ class JavascriptClassExtractor:
                 if name_node:
                     method_name = name_node.text.decode('utf-8')
 
-                    # Create method symbol
-                    method_qname = f"{class_symbol.name}.{method_name}"
-                    method_symbol = Symbol(
-                        name=method_name,
-                        qname=method_qname,
-                        symbol_type="method",
-                        file_path=context.file_symbol.file_path,
-                        line_number=node.start_point[0] + 1,
-                        language="javascript",
-                        file_id=context.file_symbol.file_id
-                    )
-                    context.writer.add_symbol(method_symbol)
-                    symbols.append(method_symbol)
+                    # Check if this is a getter or setter (property accessor)
+                    node_text = node.text.decode('utf-8').strip()
+                    if node_text.startswith('get ') or node_text.startswith('set '):
+                        # This is a property accessor - add to properties set
+                        property_names.add(method_name)
+                    else:
+                        # Regular method - add to methods list
+                        regular_methods.append((method_name, node.start_point[0] + 1))
 
-                    # Create declares_class_method relationship
-                    context.writer.add_relationship(
-                        source_symbol_id=class_symbol.id,
-                        target_symbol_id=method_symbol.id,
-                        rel_type="declares_class_method",
-                        source_qname=class_symbol.qname,
-                        target_qname=method_qname,
-                    )
+        # Create symbols for regular methods
+        for method_name, line_number in regular_methods:
+            # Create method symbol
+            method_qname = f"{class_symbol.name}.{method_name}"
+            method_symbol = Symbol(
+                name=method_name,
+                qname=method_qname,
+                symbol_type="method",
+                file_path=context.file_symbol.file_path,
+                line_number=line_number,
+                language="javascript",
+                file_id=context.file_symbol.file_id
+            )
+            context.writer.add_symbol(method_symbol)
+            symbols.append(method_symbol)
+
+            # Create declares_class_method relationship
+            context.writer.add_relationship(
+                source_symbol_id=class_symbol.id,
+                target_symbol_id=method_symbol.id,
+                rel_type="declares_class_method",
+                source_qname=class_symbol.qname,
+                target_qname=method_qname,
+            )
+
+        # Create symbols for properties (unified getters/setters)
+        for prop_name in property_names:
+            # Create property symbol
+            prop_qname = f"{class_symbol.name}.{prop_name}"
+            prop_symbol = Symbol(
+                name=prop_name,
+                qname=prop_qname,
+                symbol_type="property",
+                file_path=context.file_symbol.file_path,
+                line_number=class_node.start_point[0] + 1,  # Use class line for property
+                language="javascript",
+                file_id=context.file_symbol.file_id
+            )
+            context.writer.add_symbol(prop_symbol)
+            symbols.append(prop_symbol)
+
+            # Create declares_property relationship
+            context.writer.add_relationship(
+                source_symbol_id=class_symbol.id,
+                target_symbol_id=prop_symbol.id,
+                rel_type="declares_property",
+                source_qname=class_symbol.qname,
+                target_qname=prop_qname,
+            )
 
     def _extract_inheritance(self, class_node, class_symbol, context: SymbolExtractionContext):
         """Extract inheritance relationships"""

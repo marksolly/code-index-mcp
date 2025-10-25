@@ -2,7 +2,7 @@
 node_modules/
 venv/
 test/sample-projects/
-test/small-samples/
+#test/small-samples/
 __pycache__/
 *.pyc
 *.pyo

@@ -40,6 +40,7 @@ class JavascriptTestDefinition(BaseTestDefinition):
             "test/small-samples/javascript/dir1/file1.js",
             "test/small-samples/javascript/dir2/file2.js",
             "test/small-samples/javascript/file3.js",
+            "test/small-samples/javascript/file4.js",
         ]
 
     def _define_expected_relationships(self) -> List[Dict[str, Any]]:
@@ -73,4 +74,10 @@ class JavascriptTestDefinition(BaseTestDefinition):
             {'type': 'calls_class_method', 'count': 1, 'source_qname': 'Garage.service_car', 'target_qname': 'Car.drive'},
             {'type': 'instantiates', 'count': 1, 'source_qname': 'file3.js:main', 'target_qname': 'file3.js:Garage'},
             {'type': 'calls_class_method', 'count': 1, 'source_qname': 'file3.js:main', 'target_qname': 'Garage.service_car'},
+
+            # file4.js - getter/setter pair that currently causes DuplicateSymbolException.
+            # When properly handled, getter and setter pairs should be treated as a single property:
+            {'type': 'declares_class', 'count': 1, 'source_qname': 'file4.js:__FILE__', 'target_qname': 'file4.js:GetSetClass'},
+            {'type': 'declares_class_method', 'count': 1, 'source_qname': 'file4.js:GetSetClass', 'target_qname': 'GetSetClass.constructor'},
+            {'type': 'declares_property', 'count': 1, 'source_qname': 'file4.js:GetSetClass', 'target_qname': 'GetSetClass.dirty'},
         ]
