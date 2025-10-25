@@ -13,8 +13,6 @@ class JavascriptImportHandler(BaseImportHandler):
         """Return JavaScript-specific tree-sitter queries for import statements."""
         return ["""
             (import_statement) @from_import_stmt
-        """, """
-            (export_statement) @from_import_stmt
         """]
 
     def _extract_import_from_node(self, node) -> Optional[dict]:

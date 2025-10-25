@@ -41,6 +41,9 @@ class JavascriptTestDefinition(BaseTestDefinition):
             "test/small-samples/javascript/dir2/file2.js",
             "test/small-samples/javascript/file3.js",
             "test/small-samples/javascript/file4.js",
+            "test/small-samples/javascript/vue/SimpleVueComponent.js",
+            "test/small-samples/javascript/vue/VueComponentNoMethods.js",
+            "test/small-samples/javascript/vue/VueComponentNoName.js",
         ]
 
     def _define_expected_relationships(self) -> List[Dict[str, Any]]:
@@ -80,4 +83,14 @@ class JavascriptTestDefinition(BaseTestDefinition):
             {'type': 'declares_class', 'count': 1, 'source_qname': 'file4.js:__FILE__', 'target_qname': 'file4.js:GetSetClass'},
             {'type': 'declares_class_method', 'count': 1, 'source_qname': 'file4.js:GetSetClass', 'target_qname': 'GetSetClass.constructor'},
             {'type': 'declares_property', 'count': 1, 'source_qname': 'file4.js:GetSetClass', 'target_qname': 'GetSetClass.dirty'},
+
+            # Vue component test
+            {'type': 'declares_class', 'count': 1, 'source_qname': 'SimpleVueComponent.js:__FILE__', 'target_qname': 'SimpleVueComponent.js:SimpleVueComponent'},
+            {'type': 'declares_class_method', 'count': 1, 'source_qname': 'SimpleVueComponent.js:SimpleVueComponent', 'target_qname': 'SimpleVueComponent.greet'},
+            {'type': 'declares_class_method', 'count': 1, 'source_qname': 'SimpleVueComponent.js:SimpleVueComponent', 'target_qname': 'SimpleVueComponent.sayHi'},
+
+            # Vue component without methods - should declare class but no methods
+            {'type': 'declares_class', 'count': 1, 'source_qname': 'VueComponentNoMethods.js:__FILE__', 'target_qname': 'VueComponentNoMethods.js:VueComponentNoMethods'},
+
+            # Vue component without name - should be skipped, no symbols
         ]

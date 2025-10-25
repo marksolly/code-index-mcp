@@ -356,6 +356,140 @@ class JavascriptVariableExtractor:
         # For now, return empty list as variable extraction is not implemented
         return symbols
 
+class JavascriptVueComponentExtractor:
+    """Handles Vue component definitions - treats components as classes with methods"""
+
+    def extract_symbols(self, context: SymbolExtractionContext) -> List[Symbol]:
+        """Extract Vue component symbols and relationships"""
+        from tree_sitter import Query
+
+        symbols = []
+
+        # Query for export default { ... } statements
+        vue_query = """
+            (export_statement
+                "export"
+                "default"
+                (object) @vue_component)
+        """
+
+        query = context.language_obj.query(vue_query)
+        captures = query.captures(context.tree.root_node)
+
+        for capture in captures:
+            node = capture[0]
+            capture_name = capture[1]
+
+            if capture_name == "vue_component":
+                # Extract component name from 'name' property
+                component_name = self._get_component_name(node)
+                if not component_name:
+                    continue  # Skip if no name found
+
+                # Create class symbol for Vue component
+                component_qname = f"{context.file_name}:{component_name}"
+                component_symbol = Symbol(
+                    name=component_name,
+                    qname=component_qname,
+                    symbol_type="class",
+                    file_path=context.file_symbol.file_path,
+                    line_number=node.start_point[0] + 1,
+                    language="javascript",
+                    file_id=context.file_symbol.file_id,
+                )
+                context.writer.add_symbol(component_symbol)
+                symbols.append(component_symbol)
+
+                # Create declares_class relationship (file declares component class)
+                context.writer.add_relationship(
+                    source_symbol_id=context.file_symbol.id,
+                    target_symbol_id=component_symbol.id,
+                    rel_type="declares_class",
+                    source_qname=context.file_qname,
+                    target_qname=component_qname,
+                )
+
+                # Extract methods from 'methods' property
+                self._extract_vue_methods(node, component_symbol, context, symbols)
+
+        return symbols
+
+    def _get_component_name(self, object_node) -> str:
+        """Extract component name from the 'name' property"""
+        for child in object_node.children:
+            if child.type == "pair":
+                # Check if this pair has 'name' as key
+                key_node = child.child_by_field_name("key")
+                if key_node and key_node.text.decode('utf-8') == "name":
+                    value_node = child.child_by_field_name("value")
+                    if value_node and value_node.type == "string":
+                        # Remove quotes from string literal
+                        name_text = value_node.text.decode('utf-8')
+                        if name_text.startswith('"') and name_text.endswith('"'):
+                            return name_text[1:-1]
+                        elif name_text.startswith("'") and name_text.endswith("'"):
+                            return name_text[1:-1]
+        return None
+
+    def _extract_vue_methods(self, component_object_node, component_symbol, context: SymbolExtractionContext, symbols):
+        """Extract methods from the 'methods' property of a Vue component"""
+        from tree_sitter import Query
+
+        # Find the methods property in the component object
+        methods_object = None
+        for child in component_object_node.children:
+            if child.type == "pair":
+                key_node = child.child_by_field_name("key")
+                if key_node and key_node.text.decode('utf-8') == "methods":
+                    value_node = child.child_by_field_name("value")
+                    if value_node and value_node.type == "object":
+                        methods_object = value_node
+                        break
+
+        if not methods_object:
+            return  # No methods property found
+
+        # Extract method definitions from the methods object
+        method_query = """
+            (method_definition) @method
+        """
+
+        query = context.language_obj.query(method_query)
+        captures = query.captures(methods_object)
+
+        for capture in captures:
+            node = capture[0]
+            capture_name = capture[1]
+
+            if capture_name == "method":
+                # Get method name from property_identifier
+                name_node = node.child_by_field_name("name")
+                if name_node:
+                    method_name = name_node.text.decode('utf-8')
+
+                    # Create method symbol
+                    method_qname = f"{component_symbol.name}.{method_name}"
+                    method_symbol = Symbol(
+                        name=method_name,
+                        qname=method_qname,
+                        symbol_type="method",
+                        file_path=context.file_symbol.file_path,
+                        line_number=node.start_point[0] + 1,
+                        language="javascript",
+                        file_id=context.file_symbol.file_id,
+                    )
+                    context.writer.add_symbol(method_symbol)
+                    symbols.append(method_symbol)
+
+                    # Create declares_class_method relationship
+                    context.writer.add_relationship(
+                        source_symbol_id=component_symbol.id,
+                        target_symbol_id=method_symbol.id,
+                        rel_type="declares_class_method",
+                        source_qname=component_symbol.qname,
+                        target_qname=method_qname,
+                    )
+
 class JavascriptImportExtractor:
     """Handles import statements"""
 
@@ -375,6 +509,7 @@ class JavascriptSymbolExtractor(BaseSymbolExtractor):
             JavascriptFunctionExtractor(),
             JavascriptConstantExtractor(),
             JavascriptVariableExtractor(),
+            JavascriptVueComponentExtractor(),
             JavascriptImportExtractor(),
         ]
 
