@@ -46,21 +46,24 @@ def main():
         include_context: Optional[List[str]] = None
     ) -> str:
         """
-        Find code symbols in a code index database matching specified criteria.
+        Searches a pre-built index of this codebase for code symbols matching patterns. Faster and more comprehensive than search_files or list_code_definition_names.
 
-        Args:
-            db_path: Required. Path to the SQLite database file containing the code index.
-            pattern: Required. Search pattern for symbol names (supports glob wildcards like * and ?)
-            match_mode: Optional. Pattern matching mode ('glob' or 'regex'), default 'glob'.
-            case_sensitive: Optional. Whether pattern matching should be case-sensitive, default false.
-            symbol_type: Optional. List of symbol types to filter by.
-            path_pattern: Optional. Glob pattern to restrict search to specific files/directories.
-            language: Optional. Programming language to filter by.
-            limit: Optional. Maximum number of results to return, default 100.
-            include_context: Optional. Context information to include in results.
+        Prefer over search_files for structured symbol searches with type filtering (classes, functions) and relationship tracking (imports, calls); search_files is better for arbitrary text patterns or comments.
 
-        Returns:
-            Formatted string with search results
+        Parameters:
+
+        - db_path (required): Path to SQLite database file containing the code index.
+        - pattern (required): Search pattern for symbol names; supports glob wildcards by default.
+        - match_mode (optional, default 'glob'): Option 'glob' or 'regex' for pattern matching.
+        - case_sensitive (optional, default false): Set true for case-sensitive matching.
+        - symbol_type (optional, default null): List of symbol types e.g. ['class', 'function'] to include.
+        - path_pattern (optional, default null): Glob pattern to limit search to specific files/directories.
+        - language (optional, default null): Programming language name to filter by, all if null.
+        - limit (optional, default 50): Max results to return.
+        - include_context (optional, default null): List of context types to include e.g. ['definition', 'type'].
+
+        Returns: Tagged symbols ([class] etc.) with file paths, definition locations, and relationship data (imports, calls, instantiations) for detailed codebase insights.
+
         """
         try:
             # Get database service
