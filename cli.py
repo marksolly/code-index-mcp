@@ -73,26 +73,39 @@ def scan_directory(target_dir: str, ignore_handler: IgnoreHandler) -> List[str]:
     """Scan directory for files and return a list of file paths to index."""
     extension_map = build_extension_map()
     files_to_index = []
+    ignored_files = 0
+    ignored_dirs = 0
 
     print(f"Scanning directory: {target_dir}")
 
     for root, dirs, files in os.walk(target_dir):
         # Filter directories in-place to avoid walking ignored dirs
+        original_dirs_count = len(dirs)
         dirs[:] = [d for d in dirs if not ignore_handler.is_ignored(os.path.join(root, d))]
+        ignored_dirs += original_dirs_count - len(dirs)
 
         for file in files:
             file_path = os.path.join(root, file)
 
             if ignore_handler.is_ignored(file_path):
+                ignored_files += 1
                 continue
 
             # Check extension
             _, ext = os.path.splitext(file)
             if ext in extension_map:
                 files_to_index.append(file_path)
-                print(f"Found: {os.path.relpath(file_path, target_dir)}")
 
-    print(f"Total files to index: {len(files_to_index)}")
+    ignore_summary = ""
+    if ignored_files or ignored_dirs:
+        ignore_parts = []
+        if ignored_files:
+            ignore_parts.append(f"{ignored_files} file{'s' if ignored_files != 1 else ''}")
+        if ignored_dirs:
+            ignore_parts.append(f"{ignored_dirs} director{'ies' if ignored_dirs != 1 else 'y'}")
+        ignore_summary = f" ({', '.join(ignore_parts)} ignored)"
+
+    print(f"Total files to index: {len(files_to_index)}{ignore_summary}")
     return files_to_index
 
 
@@ -117,17 +130,19 @@ def cmd_index(args):
     db_service.delete_db()  # Start fresh
     db_service.initialize_db()
 
-    # Check for base directory .indexerignore file and warn if missing
-    base_ignore_path = Path(target_dir) / ".indexerignore"
-    if not base_ignore_path.exists():
-        print("Warning: No .indexerignore file found in base directory. Using default ignore rules.", file=sys.stderr)
-        print("Create an .indexerignore file to override default exclusions. See README for details.", file=sys.stderr)
-
-    # Setup ignore handler, required by scan_directory()
+    # Setup ignore handler for both scanning and orchestrator
     ignore_handler = IgnoreHandler()
 
     # Scan directory
     files_to_index = scan_directory(str(target_dir), ignore_handler)
+
+    # Report ignore rules used (always show for transparency)
+    registry = ignore_handler.get_registry()
+    if registry:
+        ignore_files_str = ", ".join(sorted(registry))
+        print(f"Ignore rules applied from: {ignore_files_str}")
+    else:
+        print("Using default ignore rules. Create an .indexerignore file to override default exclusions. See README for details.")
 
     if not files_to_index:
         print("No files found to index")
@@ -151,7 +166,8 @@ def cmd_index(args):
         db_service,
         logger,
         catch_exceptions=True,
-        exception_log_file=exception_log_file
+        exception_log_file=exception_log_file,
+        ignore_handler=ignore_handler
     )
 
     # Process files
