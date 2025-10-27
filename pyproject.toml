@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "code-scope-mcp"
-version = "0.0.1"
-description = "Code indexing and analysis tools for LLMs using MCP"
+version = "0.0.2"
+description = "Code indexing and analysis tools for LLMs using MCP and CLI tools"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
